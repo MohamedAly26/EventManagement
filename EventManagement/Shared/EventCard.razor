@@ -1,0 +1,23 @@
+﻿@using EventManagement.Models
+@using Microsoft.AspNetCore.Components
+@inject NavigationManager Nav
+
+<div class="card p-3 m-2" style="width: 18rem;">
+    <h5>@Event.Title</h5>
+    <p>@Event.StartDateTime.ToString("dd/MM/yyyy HH:mm")</p>
+    <p>@Event.Location</p>
+
+    <!-- Evitiamo virgolette annidate chiamando un metodo C# -->
+    <button class="btn btn-primary" @onclick="@(() => NavigateToDetails(Event.Id))">
+        View Details
+    </button>
+</div>
+
+@code {
+    [Parameter] public Event Event { get; set; } = null!;
+
+    private void NavigateToDetails(int id)
+    {
+        Nav.NavigateTo($"/eventdetails/{id}");
+    }
+}
