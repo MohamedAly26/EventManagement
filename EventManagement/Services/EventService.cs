@@ -2,85 +2,94 @@
 using EventManagement.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace EventManagement.Services
+namespace EventManagement.Services;
+
+public enum SubscribeResult
 {
-    public class EventService
-    {
-        private readonly AppDbContext _context;
-
-        public EventService(AppDbContext context)
-        {
-            _context = context;
-        }
-
-        // Get all events (ordered by date)
-        public async Task<List<Event>> GetAllAsync()
-        {
-            return await _context.Events
-                .OrderBy(e => e.StartDateTime)
-                .ToListAsync();
-        }
-
-        // Get event by id
-        public async Task<Event?> GetByIdAsync(int id)
-        {
-            return await _context.Events
-                .Include(e => e.Subscriptions)
-                .FirstOrDefaultAsync(e => e.Id == id);
-        }
-
-        // Add new event
-        public async Task AddAsync(Event ev)
-        {
-            _context.Events.Add(ev);
-            await _context.SaveChangesAsync();
-        }
-
-        // Update event
-        public async Task UpdateAsync(Event ev)
-        {
-            _context.Events.Update(ev);
-            await _context.SaveChangesAsync();
-        }
-
-        // Delete event
-        public async Task DeleteAsync(int id)
-        {
-            var ev = await _context.Events.FindAsync(id);
-            if (ev != null)
-            {
-                _context.Events.Remove(ev);
-                await _context.SaveChangesAsync();
-            }
-        }
-        public async Task<bool> SubscribeAsync(int eventId, int userId)
-        {
-            var ev = await _context.Events.Include(e => e.Subscriptions)
-                                          .FirstOrDefaultAsync(e => e.Id == eventId);
-
-            if (ev == null) return false;
-
-            // check max participants
-            if (ev.Subscriptions.Count >= ev.MaxParticipants) return false;
-
-            // check if already subscribed
-            var already = await _context.Subscriptions
-                .AnyAsync(s => s.EventId == eventId && s.UserId == userId);
-            if (already) return false;
-
-            // add subscription
-            var sub = new Subscription
-            {
-                EventId = eventId,
-                UserId = userId,
-                DateSubscribed = DateTime.UtcNow
-            };
-
-            _context.Subscriptions.Add(sub);
-            await _context.SaveChangesAsync();
-            return true;
-        }
-    }
+    Success,
+    AlreadySubscribed,
+    EventNotFound,
+    EventFull,
+    UserNotFound
 }
 
+public class EventService
+{
+    private readonly AppDbContext _db;
 
+    public EventService(AppDbContext db)
+    {
+        _db = db;
+    }
+
+    public async Task<List<Event>> GetAllAsync()
+    {
+        return await _db.Events
+            .Include(e => e.Subscriptions)
+            .OrderBy(e => e.StartDateTime)
+            .ToListAsync();
+    }
+
+    public async Task<Event?> GetByIdAsync(int id)
+    {
+        return await _db.Events
+            .Include(e => e.Subscriptions)
+            .FirstOrDefaultAsync(e => e.Id == id);
+    }
+
+    public async Task<SubscribeResult> SubscribeAsync(int eventId, int userId)
+    {
+        var ev = await _db.Events.Include(e => e.Subscriptions)
+                                 .FirstOrDefaultAsync(e => e.Id == eventId);
+        if (ev == null) return SubscribeResult.EventNotFound;
+
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null) return SubscribeResult.UserNotFound;
+
+        // già iscritto?
+        var already = await _db.Subscriptions
+            .AnyAsync(s => s.EventId == eventId && s.UserId == userId);
+        if (already) return SubscribeResult.AlreadySubscribed;
+
+        // capienza piena?
+        var current = ev.Subscriptions?.Count ?? 0;
+        if (current >= ev.MaxParticipants) return SubscribeResult.EventFull;
+
+        _db.Subscriptions.Add(new Subscription
+        {
+            EventId = eventId,
+            UserId = userId
+        });
+
+        await _db.SaveChangesAsync();
+        return SubscribeResult.Success;
+    }
+
+
+
+    public async Task<bool> IsSubscribedAsync(int eventId, int userId)
+    {
+        return await _db.Subscriptions
+            .AnyAsync(s => s.EventId == eventId && s.UserId == userId);
+    }
+
+    public async Task<bool> UnsubscribeAsync(int eventId, int userId)
+    {
+        var sub = await _db.Subscriptions
+            .FirstOrDefaultAsync(s => s.EventId == eventId && s.UserId == userId);
+        if (sub is null) return false;
+
+        _db.Subscriptions.Remove(sub);
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    // Utente demo (finché non mettiamo l’auth)
+    public async Task<int?> GetAnyUserIdAsync()
+    {
+        return await _db.Users
+            .OrderBy(u => u.Id)
+            .Select(u => (int?)u.Id)
+            .FirstOrDefaultAsync();
+    }
+}
