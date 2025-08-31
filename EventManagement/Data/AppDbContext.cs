@@ -1,35 +1,37 @@
-﻿using EventManagement.Models;
+﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using EventManagement.Models;
 
 namespace EventManagement.Data;
 
-public class AppDbContext : DbContext
+public class AppDbContext : IdentityDbContext<IdentityUser>
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
     public DbSet<Event> Events => Set<Event>();
-    public DbSet<User> Users => Set<User>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void OnModelCreating(ModelBuilder builder)
     {
-        base.OnModelCreating(modelBuilder);
+        base.OnModelCreating(builder);
 
-        // Un utente può iscriversi una sola volta ad un evento
-        modelBuilder.Entity<Subscription>()
-            .HasIndex(s => new { s.EventId, s.UserId })
-            .IsUnique();
+        // (opzionale) chiave composta per Subscription
+        builder.Entity<Subscription>()
+            .HasKey(s => new { s.EventId, s.UserId });
 
-        modelBuilder.Entity<Subscription>()
+        // 👉 quando elimini un Event, elimina anche le sue Subscriptions
+        builder.Entity<Subscription>()
             .HasOne(s => s.Event)
             .WithMany(e => e.Subscriptions)
             .HasForeignKey(s => s.EventId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        modelBuilder.Entity<Subscription>()
-            .HasOne(s => s.User)
-            .WithMany(u => u.Subscriptions)
+        // relazione con IdentityUser (N:1), senza cascata sull’utente
+        builder.Entity<Subscription>()
+            .HasOne<IdentityUser>(s => s.User)
+            .WithMany()
             .HasForeignKey(s => s.UserId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
