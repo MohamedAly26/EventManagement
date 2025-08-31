@@ -2,7 +2,9 @@
 @using EventManagement.Models
 @using EventManagement.Services
 @using EventManagement.Shared
+@using Microsoft.AspNetCore.Components.Authorization
 @inject EventService EventService
+@inject NavigationManager Nav
 
 <h3>Available Events</h3>
 
@@ -25,8 +27,25 @@ else
 }
 
 @code {
-    private List<Event>? events;
+    private List<EventManagement.Models.Event>? events;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     protected override async Task OnInitializedAsync()
-        => events = await EventService.GetAllAsync();
+    {
+        // Se è Admin → redirect alla dashboard
+        if (AuthStateTask is not null)
+        {
+            var user = (await AuthStateTask).User;
+            if (user.Identity?.IsAuthenticated == true && user.IsInRole("Admin"))
+            {
+                Nav.NavigateTo("/admin/events", forceLoad: true);
+                return;
+            }
+        }
+
+        // Utenti normali → carica le card
+        events = await EventService.GetAllAsync();
+    }
 }

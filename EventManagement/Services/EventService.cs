@@ -1,6 +1,7 @@
 ﻿using EventManagement.Data;
 using EventManagement.Models;
 using Microsoft.EntityFrameworkCore;
+
 namespace EventManagement.Services;
 
 public enum SubscribeResult
@@ -9,82 +10,108 @@ public enum SubscribeResult
     AlreadySubscribed,
     EventNotFound,
     EventFull,
-    UserNotFound,
-    EventClosed // ⟵ NEW
+    UserNotFound
 }
 
 public class EventService
 {
     private readonly AppDbContext _db;
+    public EventService(AppDbContext db) => _db = db;
 
-    public EventService(AppDbContext db)
-    {
-        _db = db;
-    }
+    // -------------------- Lettura Eventi --------------------
 
     public async Task<List<Event>> GetAllAsync()
-    {
-        return await _db.Events
+        => await _db.Events
+            .AsNoTracking()
             .Include(e => e.Subscriptions)
             .OrderBy(e => e.StartDateTime)
             .ToListAsync();
-    }
 
     public async Task<Event?> GetByIdAsync(int id)
-    {
-        return await _db.Events
+        => await _db.Events
+            .AsNoTracking()
             .Include(e => e.Subscriptions)
             .FirstOrDefaultAsync(e => e.Id == id);
-    }
-    public async Task<List<Event>> GetUserSubscriptionsAsync(int userId, bool includePast = false)
+
+    public async Task<List<string>> GetCategoriesAsync()
+        => await _db.Events
+            .AsNoTracking()
+            .Where(e => !string.IsNullOrWhiteSpace(e.Category))
+            .Select(e => e.Category!)     // ok: filtrato sopra
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync();
+
+    public async Task<List<Event>> SearchAsync(
+        string? q,
+        string? category,
+        DateTime? from,
+        DateTime? to,
+        string? location)
     {
-        // Radice: Events, filtro sugli eventi a cui l'utente è iscritto
         var query = _db.Events
-            .Where(e => e.Subscriptions.Any(s => s.UserId == userId))
-            .Include(e => e.Subscriptions)   // valido perché la radice è DbSet<Event>
+            .AsNoTracking()
+            .Include(e => e.Subscriptions)
             .AsQueryable();
 
-        if (!includePast)
-            query = query.Where(e => e.StartDateTime >= DateTime.Now);
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var l = q.ToLower();
+            query = query.Where(e =>
+                (e.Title != null && e.Title.ToLower().Contains(l)) ||
+                (e.Description != null && e.Description.ToLower().Contains(l)) ||
+                (e.Location != null && e.Location.ToLower().Contains(l)));
+        }
 
-        return await query
-            .OrderBy(e => e.StartDateTime)
-            .ToListAsync();
+        if (!string.IsNullOrWhiteSpace(category))
+            query = query.Where(e => e.Category == category);
+
+        if (from.HasValue)
+            query = query.Where(e => e.StartDateTime >= from.Value);
+
+        if (to.HasValue)
+            query = query.Where(e => e.StartDateTime <= to.Value);
+
+        if (!string.IsNullOrWhiteSpace(location))
+        {
+            var ll = location.ToLower();
+            query = query.Where(e => e.Location != null && e.Location.ToLower().Contains(ll));
+        }
+
+        return await query.OrderBy(e => e.StartDateTime).ToListAsync();
     }
-    public async Task<SubscribeResult> SubscribeAsync(int eventId, int userId)
+
+    // -------------------- Iscrizioni --------------------
+
+    public Task<bool> IsSubscribedAsync(int eventId, string userId)
+        => _db.Subscriptions.AnyAsync(s => s.EventId == eventId && s.UserId == userId);
+
+    public async Task<SubscribeResult> SubscribeAsync(int eventId, string userId)
     {
-        var ev = await _db.Events.Include(e => e.Subscriptions)
-                                 .FirstOrDefaultAsync(e => e.Id == eventId);
-        if (ev == null) return SubscribeResult.EventNotFound;
+        // prendo solo ciò che serve dell'evento (Id/MaxParticipants), senza navigation
+        var ev = await _db.Events
+            .AsNoTracking()
+            .Select(e => new { e.Id, e.MaxParticipants })
+            .FirstOrDefaultAsync(e => e.Id == eventId);
 
-        var user = await _db.Users.FindAsync(userId);
-        if (user == null) return SubscribeResult.UserNotFound;
+        if (ev is null) return SubscribeResult.EventNotFound;
 
-        // evento già iniziato/chiuso?
-        if (ev.StartDateTime <= DateTime.Now)
-            return SubscribeResult.EventClosed;
+        var userExists = await _db.Users.AnyAsync(u => u.Id == userId);
+        if (!userExists) return SubscribeResult.UserNotFound;
 
-        var already = await _db.Subscriptions
-            .AnyAsync(s => s.EventId == eventId && s.UserId == userId);
-        if (already) return SubscribeResult.AlreadySubscribed;
+        if (await IsSubscribedAsync(eventId, userId))
+            return SubscribeResult.AlreadySubscribed;
 
-        var current = ev.Subscriptions?.Count ?? 0;
-        if (current >= ev.MaxParticipants) return SubscribeResult.EventFull;
+        var currentCount = await _db.Subscriptions.CountAsync(s => s.EventId == eventId);
+        if (currentCount >= ev.MaxParticipants)
+            return SubscribeResult.EventFull;
 
         _db.Subscriptions.Add(new Subscription { EventId = eventId, UserId = userId });
         await _db.SaveChangesAsync();
         return SubscribeResult.Success;
     }
 
-
-
-    public async Task<bool> IsSubscribedAsync(int eventId, int userId)
-    {
-        return await _db.Subscriptions
-            .AnyAsync(s => s.EventId == eventId && s.UserId == userId);
-    }
-
-    public async Task<bool> UnsubscribeAsync(int eventId, int userId)
+    public async Task<bool> UnsubscribeAsync(int eventId, string userId)
     {
         var sub = await _db.Subscriptions
             .FirstOrDefaultAsync(s => s.EventId == eventId && s.UserId == userId);
@@ -95,12 +122,61 @@ public class EventService
         return true;
     }
 
-    // Utente demo (finché non mettiamo l’auth)
-    public async Task<int?> GetAnyUserIdAsync()
+    public async Task<List<Event>> GetUserSubscriptionsAsync(string userId, bool includePast = false)
     {
-        return await _db.Users
-            .OrderBy(u => u.Id)
-            .Select(u => (int?)u.Id)
-            .FirstOrDefaultAsync();
+        var query = _db.Events
+            .AsNoTracking()
+            .Where(e => e.Subscriptions.Any(s => s.UserId == userId))
+            .Include(e => e.Subscriptions)
+            .AsQueryable();
+
+        if (!includePast)
+            query = query.Where(e => e.StartDateTime >= DateTime.Now);
+
+        return await query.OrderBy(e => e.StartDateTime).ToListAsync();
+    }
+
+    public record EventSubscriber(string UserId, string? Email, string? UserName, DateTime CreatedAt);
+
+    public async Task<List<EventSubscriber>> GetSubscribersForEventAsync(int eventId)
+        => await _db.Subscriptions
+            .AsNoTracking()
+            .Where(s => s.EventId == eventId)
+            .Include(s => s.User)
+            .OrderBy(s => s.CreatedAt)
+            .Select(s => new EventSubscriber(
+                s.UserId,
+                s.User != null ? s.User.Email : null,
+                s.User != null ? s.User.UserName : null,
+                s.CreatedAt))
+            .ToListAsync();
+
+    // -------------------- CRUD Eventi (Admin) --------------------
+
+    public async Task<Event> CreateAsync(Event ev)
+    {
+        _db.Events.Add(ev);
+        await _db.SaveChangesAsync();
+        return ev;
+    }
+
+    public async Task<bool> UpdateAsync(Event ev)
+    {
+        var dbEv = await _db.Events.FindAsync(ev.Id);
+        if (dbEv is null) return false;
+
+        _db.Entry(dbEv).CurrentValues.SetValues(ev);
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> DeleteAsync(int id)
+    {
+        var ev = await _db.Events.FindAsync(id);
+        if (ev is null) return false;
+
+        _db.Events.Remove(ev);                    // Subscriptions verranno rimosse in CASCADE (configurato nel DbContext)
+        await _db.SaveChangesAsync();
+        return true;
     }
 }

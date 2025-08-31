@@ -3,6 +3,7 @@
 @using EventManagement.Models
 @using EventManagement.Services
 @using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Authorization
 @inject EventService EventService
 
 <h3 class="mb-3">Event Details</h3>
@@ -50,9 +51,9 @@ else
         <div class="mt-2">
             <button type="button"
                     class="btn @(isSubscribed ? "btn-outline-danger" : "btn-success")"
-                    disabled="@(!isSubscribed && (isFull || isClosed))"
+                    disabled="@(!isSubscribed && isFull)"
                     @onclick="ToggleSubscription">
-                @(isSubscribed ? "Unsubscribe" : (isClosed ? "Event Closed" : (isFull ? "Event Full" : "Subscribe")))
+                @(isSubscribed ? "Unsubscribe" : (isFull ? "Event Full" : "Subscribe"))
             </button>
 
             <a class="btn btn-sm btn-outline-secondary rounded-pill ms-2 d-inline-flex align-items-center px-3" href="/">
@@ -68,101 +69,74 @@ else
     </div>
 }
 
-
 @code {
     [Parameter] public int Id { get; set; }
-    private bool isClosed => ev is not null && ev.StartDateTime <= DateTime.Now;
 
     private Event? ev;
     private string? message;
     private string alertClass = "alert-info";
     private bool loading = true;
 
-    private int? currentUserId;
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationStateTask { get; set; }  // nullable
+    private string? currentUserId;
     private bool isSubscribed;
     private bool isFull => (ev?.Subscriptions?.Count ?? 0) >= (ev?.MaxParticipants ?? 0);
 
     protected override async Task OnInitializedAsync()
     {
-        // prendo un utente esistente (demo) dal DB
-        currentUserId = await EventService.GetAnyUserIdAsync();
+        // Prende l'utente se lo stato è disponibile
+        if (AuthenticationStateTask is not null)
+        {
+            var authState = await AuthenticationStateTask;
+            currentUserId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        }
 
         ev = await EventService.GetByIdAsync(Id);
         loading = false;
 
-        if (ev == null)
+        if (ev is null)
         {
             message = "Event not found or it may have been deleted.";
             return;
         }
 
-        if (currentUserId != null)
-            isSubscribed = await EventService.IsSubscribedAsync(Id, currentUserId.Value);
+        if (!string.IsNullOrEmpty(currentUserId))
+            isSubscribed = await EventService.IsSubscribedAsync(Id, currentUserId);
     }
 
     private async Task ToggleSubscription()
     {
-        if (currentUserId is null)
+        if (string.IsNullOrEmpty(currentUserId))
         {
             alertClass = "alert-danger";
-            message = "Nessun utente demo presente.";
+            message = "Please log in to subscribe.";
             return;
         }
 
         if (!isSubscribed)
         {
-            var result = await EventService.SubscribeAsync(Id, currentUserId.Value);
-
+            var result = await EventService.SubscribeAsync(Id, currentUserId);
             switch (result)
             {
                 case SubscribeResult.Success:
-                    alertClass = "alert-success";
-                    message = "Successfully subscribed!";
-                    isSubscribed = true;
-                    break;
+                    alertClass = "alert-success"; message = "Successfully subscribed!"; isSubscribed = true; break;
                 case SubscribeResult.AlreadySubscribed:
-                    alertClass = "alert-warning";
-                    message = "You are already subscribed to this event.";
-                    isSubscribed = true;
-                    break;
+                    alertClass = "alert-warning"; message = "You are already subscribed."; isSubscribed = true; break;
                 case SubscribeResult.EventFull:
-                    alertClass = "alert-danger";
-                    message = "Sorry, this event is full.";
-                    break;
+                    alertClass = "alert-danger"; message = "Sorry, this event is full."; break;
                 case SubscribeResult.UserNotFound:
-                    alertClass = "alert-danger";
-                    message = "User not found.";
-                    break;
-                case SubscribeResult.EventClosed:
-                    alertClass = "alert-danger";
-                    message = "This event is already in the past.";
-                    break;
-
                 default:
-                    alertClass = "alert-danger";
-                    message = "Subscription failed.";
-                    break;
+                    alertClass = "alert-danger"; message = "Subscription failed."; break;
             }
         }
         else
         {
-            var ok = await EventService.UnsubscribeAsync(Id, currentUserId.Value);
-            if (ok)
-            {
-                alertClass = "alert-info";
-                message = "Unsubscribed.";
-                isSubscribed = false;
-            }
-            else
-            {
-                alertClass = "alert-danger";
-                message = "Unsubscribe failed.";
-            }
+            var ok = await EventService.UnsubscribeAsync(Id, currentUserId);
+            if (ok) { alertClass = "alert-info"; message = "Unsubscribed."; isSubscribed = false; }
+            else { alertClass = "alert-danger"; message = "Unsubscribe failed."; }
         }
 
-        // ricarica i dati per aggiornare il conteggio
-        ev = await EventService.GetByIdAsync(Id);
+        ev = await EventService.GetByIdAsync(Id); // aggiorna contatore
         StateHasChanged();
     }
 }
-

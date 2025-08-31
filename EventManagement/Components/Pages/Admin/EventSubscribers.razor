@@ -1,0 +1,106 @@
+﻿@page "/admin/events/{Id:int}/subscribers"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+@using Microsoft.AspNetCore.Authorization
+@using EventManagement.Services
+@using EventManagement.Models
+@using static EventManagement.Services.EventService
+@inject EventService EventService
+@inject NavigationManager Nav
+
+<h3 class="mb-3">Subscribers</h3>
+
+@if (loading)
+{
+    <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+}
+else if (ev is null)
+{
+    <div class="alert alert-warning">Event not found.</div>
+}
+else
+{
+    <div class="card p-3 mb-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h5 class="mb-1">@ev.Title</h5>
+                <small class="text-muted">
+                    @ev.StartDateTime.ToString("dd/MM/yyyy HH:mm") · @ev.Location
+                </small>
+            </div>
+            <a class="btn btn-outline-secondary" href="/admin/events">Back</a>
+        </div>
+    </div>
+
+    <div class="card p-3">
+        <h5 class="mb-2">Iscritti (@subs.Count / @ev.MaxParticipants)</h5>
+
+        @if (!subs.Any())
+        {
+            <p class="text-muted mb-0">Nessun iscritto.</p>
+        }
+        else
+        {
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Username</th>
+                        <th>Subscribed At</th>
+                        <th class="text-end"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in subs)
+                    {
+                        <tr>
+                            <td>@s.Email</td>
+                            <td>@s.UserName</td>
+                            <td>@s.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-danger" @onclick="@(() => Remove(s.UserId))">
+                                    Remove
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <div class="alert @alertClass mt-3">@message</div>
+        }
+    </div>
+
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private Event? ev;
+    private List<EventSubscriber> subs = new();
+    private bool loading = true;
+    private string? message;
+    private string alertClass = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+        loading = false;
+    }
+
+    private async Task Load()
+    {
+        ev = await EventService.GetByIdAsync(Id);
+        subs = ev is null ? new() : await EventService.GetSubscribersForEventAsync(Id);
+    }
+
+    private async Task Remove(string userId)
+    {
+        var ok = await EventService.UnsubscribeAsync(Id, userId);
+        if (ok) { alertClass = "alert-info"; message = "Iscrizione rimossa."; await Load(); StateHasChanged(); }
+        else { alertClass = "alert-danger"; message = "Operazione non riuscita."; }
+    }
+}

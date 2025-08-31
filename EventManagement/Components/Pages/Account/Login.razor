@@ -1,0 +1,33 @@
+﻿@page "/account/login"
+@rendermode InteractiveServer
+@inject NavigationManager Nav
+
+<h3>Login</h3>
+
+@if (showError)
+{
+    <div class="alert alert-danger">Invalid credentials.</div>
+}
+
+<form method="post" action="/app-login">
+    <div class="mb-2">
+        <label class="form-label">Email</label>
+        <input class="form-control" name="email" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Password</label>
+        <input class="form-control" type="password" name="password" />
+    </div>
+    <button class="btn btn-primary" type="submit">Login</button>
+    <a class="btn btn-link" href="/account/register">Register</a>
+</form>
+
+@code {
+    bool showError;
+
+    protected override void OnInitialized()
+    {
+        var uri = new Uri(Nav.Uri);
+        showError = System.Web.HttpUtility.ParseQueryString(uri.Query).Get("e") == "1";
+    }
+}

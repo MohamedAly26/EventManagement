@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @using EventManagement.Models
 @using EventManagement.Services
+@using Microsoft.AspNetCore.Components.Authorization
 @inject EventService EventService
 @inject NavigationManager Nav
 
@@ -11,9 +12,9 @@
 {
     <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
 }
-else if (currentUserId is null)
+else if (string.IsNullOrEmpty(currentUserId))
 {
-    <div class="alert alert-warning">No demo user found.</div>
+    <div class="alert alert-warning">Please log in to see your subscriptions.</div>
 }
 else
 {
@@ -89,7 +90,10 @@ else
 
 @code {
     private bool loading = true;
-    private int? currentUserId;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+    private string? currentUserId;
+
     private List<Event> upcoming = new();
     private List<Event> past = new();
     private string? message;
@@ -97,16 +101,18 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        currentUserId = await EventService.GetAnyUserIdAsync();
+        var auth = await AuthenticationStateTask;
+        currentUserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
         await Load();
         loading = false;
     }
 
     private async Task Load()
     {
-        if (currentUserId is null) return;
+        if (string.IsNullOrEmpty(currentUserId)) return;
 
-        var all = await EventService.GetUserSubscriptionsAsync(currentUserId.Value, includePast: true);
+        var all = await EventService.GetUserSubscriptionsAsync(currentUserId, includePast: true);
         var now = DateTime.Now;
         upcoming = all.Where(e => e.StartDateTime >= now).ToList();
         past = all.Where(e => e.StartDateTime < now).ToList();
@@ -114,9 +120,9 @@ else
 
     private async Task Unsubscribe(int eventId)
     {
-        if (currentUserId is null) return;
+        if (string.IsNullOrEmpty(currentUserId)) return;
 
-        var ok = await EventService.UnsubscribeAsync(eventId, currentUserId.Value);
+        var ok = await EventService.UnsubscribeAsync(eventId, currentUserId);
         if (ok)
         {
             alertClass = "alert-info";
