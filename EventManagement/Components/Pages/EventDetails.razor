@@ -50,9 +50,9 @@ else
         <div class="mt-2">
             <button type="button"
                     class="btn @(isSubscribed ? "btn-outline-danger" : "btn-success")"
-                    disabled="@(!isSubscribed && isFull)"
+                    disabled="@(!isSubscribed && (isFull || isClosed))"
                     @onclick="ToggleSubscription">
-                @(isSubscribed ? "Unsubscribe" : (isFull ? "Event Full" : "Subscribe"))
+                @(isSubscribed ? "Unsubscribe" : (isClosed ? "Event Closed" : (isFull ? "Event Full" : "Subscribe")))
             </button>
 
             <a class="btn btn-sm btn-outline-secondary rounded-pill ms-2 d-inline-flex align-items-center px-3" href="/">
@@ -71,6 +71,7 @@ else
 
 @code {
     [Parameter] public int Id { get; set; }
+    private bool isClosed => ev is not null && ev.StartDateTime <= DateTime.Now;
 
     private Event? ev;
     private string? message;
@@ -132,6 +133,11 @@ else
                     alertClass = "alert-danger";
                     message = "User not found.";
                     break;
+                case SubscribeResult.EventClosed:
+                    alertClass = "alert-danger";
+                    message = "This event is already in the past.";
+                    break;
+
                 default:
                     alertClass = "alert-danger";
                     message = "Subscription failed.";
