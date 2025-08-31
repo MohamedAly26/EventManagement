@@ -1,7 +1,6 @@
 ﻿using EventManagement.Data;
 using EventManagement.Models;
 using Microsoft.EntityFrameworkCore;
-
 namespace EventManagement.Services;
 
 public enum SubscribeResult
@@ -10,7 +9,8 @@ public enum SubscribeResult
     AlreadySubscribed,
     EventNotFound,
     EventFull,
-    UserNotFound
+    UserNotFound,
+    EventClosed // ⟵ NEW
 }
 
 public class EventService
@@ -36,7 +36,21 @@ public class EventService
             .Include(e => e.Subscriptions)
             .FirstOrDefaultAsync(e => e.Id == id);
     }
+    public async Task<List<Event>> GetUserSubscriptionsAsync(int userId, bool includePast = false)
+    {
+        // Radice: Events, filtro sugli eventi a cui l'utente è iscritto
+        var query = _db.Events
+            .Where(e => e.Subscriptions.Any(s => s.UserId == userId))
+            .Include(e => e.Subscriptions)   // valido perché la radice è DbSet<Event>
+            .AsQueryable();
 
+        if (!includePast)
+            query = query.Where(e => e.StartDateTime >= DateTime.Now);
+
+        return await query
+            .OrderBy(e => e.StartDateTime)
+            .ToListAsync();
+    }
     public async Task<SubscribeResult> SubscribeAsync(int eventId, int userId)
     {
         var ev = await _db.Events.Include(e => e.Subscriptions)
@@ -46,21 +60,18 @@ public class EventService
         var user = await _db.Users.FindAsync(userId);
         if (user == null) return SubscribeResult.UserNotFound;
 
-        // già iscritto?
+        // evento già iniziato/chiuso?
+        if (ev.StartDateTime <= DateTime.Now)
+            return SubscribeResult.EventClosed;
+
         var already = await _db.Subscriptions
             .AnyAsync(s => s.EventId == eventId && s.UserId == userId);
         if (already) return SubscribeResult.AlreadySubscribed;
 
-        // capienza piena?
         var current = ev.Subscriptions?.Count ?? 0;
         if (current >= ev.MaxParticipants) return SubscribeResult.EventFull;
 
-        _db.Subscriptions.Add(new Subscription
-        {
-            EventId = eventId,
-            UserId = userId
-        });
-
+        _db.Subscriptions.Add(new Subscription { EventId = eventId, UserId = userId });
         await _db.SaveChangesAsync();
         return SubscribeResult.Success;
     }

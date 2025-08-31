@@ -1,0 +1,133 @@
+﻿@page "/me/subscriptions"
+@rendermode InteractiveServer
+@using EventManagement.Models
+@using EventManagement.Services
+@inject EventService EventService
+@inject NavigationManager Nav
+
+<h3 class="mb-3">My Subscriptions</h3>
+
+@if (loading)
+{
+    <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+}
+else if (currentUserId is null)
+{
+    <div class="alert alert-warning">No demo user found.</div>
+}
+else
+{
+    <div class="card p-3 mb-3">
+        <h5 class="mb-2">Upcoming</h5>
+        @if (!upcoming.Any())
+        {
+            <p class="text-muted mb-0">No upcoming subscriptions.</p>
+        }
+        else
+        {
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>When</th>
+                        <th>Location</th>
+                        <th>Seats</th>
+                        <th class="text-end"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in upcoming)
+                    {
+                        <tr>
+                            <td>@e.Title</td>
+                            <td>@e.StartDateTime.ToString("dd/MM/yyyy HH:mm")</td>
+                            <td>@e.Location</td>
+                            <td>@(e.Subscriptions?.Count ?? 0)/@e.MaxParticipants</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-danger" @onclick="@(() => Unsubscribe(e.Id))">
+                                    Unsubscribe
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="@(() => Nav.NavigateTo($"/eventdetails/{e.Id}"))">
+                                    Details
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="card p-3">
+        <h5 class="mb-2">Past</h5>
+        @if (!past.Any())
+        {
+            <p class="text-muted mb-0">No past subscriptions.</p>
+        }
+        else
+        {
+            <ul class="list-group list-group-flush">
+                @foreach (var e in past)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-semibold">@e.Title</div>
+                            <small class="text-muted">@e.StartDateTime.ToString("dd/MM/yyyy HH:mm") · @e.Location</small>
+                        </div>
+                        <a class="btn btn-sm btn-outline-secondary" href="@($"/eventdetails/{e.Id}")">Details</a>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <div class="alert @alertClass mt-3">@message</div>
+    }
+}
+
+@code {
+    private bool loading = true;
+    private int? currentUserId;
+    private List<Event> upcoming = new();
+    private List<Event> past = new();
+    private string? message;
+    private string alertClass = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUserId = await EventService.GetAnyUserIdAsync();
+        await Load();
+        loading = false;
+    }
+
+    private async Task Load()
+    {
+        if (currentUserId is null) return;
+
+        var all = await EventService.GetUserSubscriptionsAsync(currentUserId.Value, includePast: true);
+        var now = DateTime.Now;
+        upcoming = all.Where(e => e.StartDateTime >= now).ToList();
+        past = all.Where(e => e.StartDateTime < now).ToList();
+    }
+
+    private async Task Unsubscribe(int eventId)
+    {
+        if (currentUserId is null) return;
+
+        var ok = await EventService.UnsubscribeAsync(eventId, currentUserId.Value);
+        if (ok)
+        {
+            alertClass = "alert-info";
+            message = "Unsubscribed.";
+            await Load();
+            StateHasChanged();
+        }
+        else
+        {
+            alertClass = "alert-danger";
+            message = "Unsubscribe failed.";
+        }
+    }
+}
