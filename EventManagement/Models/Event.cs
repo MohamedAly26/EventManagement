@@ -1,17 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
-
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace EventManagement.Models
 {
     public class Event
     {
         public int Id { get; set; }
-        public string Title { get; set; } = null!;
+        [Required] public string Title { get; set; } = "";
         public string? Description { get; set; }
         public DateTime StartDateTime { get; set; }
-        public string? Location { get; set; }
-        public int MaxParticipants { get; set; }
+        public string Location { get; set; } = "";
+        public int MaxParticipants { get; set; } = 0;
         public string? Category { get; set; }
 
         // navigation

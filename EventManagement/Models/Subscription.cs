@@ -10,7 +10,7 @@ namespace EventManagement.Models
         public int EventId { get; set; }
         public int UserId { get; set; }
 
-        public DateTime DateSubscribed { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // navigation
         public Event? Event { get; set; }

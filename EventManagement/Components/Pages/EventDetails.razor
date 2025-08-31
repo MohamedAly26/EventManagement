@@ -1,57 +1,162 @@
 ﻿@page "/eventdetails/{Id:int}"
+@rendermode InteractiveServer
 @using EventManagement.Models
 @using EventManagement.Services
 @using Microsoft.AspNetCore.Components
 @inject EventService EventService
 
-<h3>Event Details</h3>
+<h3 class="mb-3">Event Details</h3>
 
 @if (loading)
 {
-    <p>Loading...</p>
+    <div class="spinner-border" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
 }
-else if (ev == null)
+else if (ev is null)
 {
     <div class="alert alert-warning">Event not found.</div>
 }
 else
 {
     <div class="card p-3 m-2">
-        <h4>@ev.Title</h4>
-        <p><b>Date:</b> @ev.StartDateTime.ToString("dd/MM/yyyy HH:mm")</p>
-        <p><b>Location:</b> @ev.Location</p>
-        <p><b>Description:</b> @ev.Description</p>
-        <p><b>Category:</b> @ev.Category</p>
-        <p><b>Max Participants:</b> @ev.MaxParticipants</p>
-        <p><b>Currently Subscribed:</b> @(ev.Subscriptions?.Count ?? 0)</p>
+        <div class="d-flex justify-content-between align-items-center">
+            <h4 class="mb-1">@ev.Title</h4>
 
-        <button class="btn btn-success" @onclick="Subscribe">Subscribe</button>
+            @if (isSubscribed)
+            {
+                <span class="badge bg-success">Subscribed</span>
+            }
+            else if (isFull)
+            {
+                <span class="badge bg-danger">Full</span>
+            }
+        </div>
+
+        <p class="mb-1"><b>Date:</b> @ev.StartDateTime.ToString("dd/MM/yyyy HH:mm")</p>
+        <p class="mb-1"><b>Location:</b> @ev.Location</p>
+
+        @if (!string.IsNullOrWhiteSpace(ev.Description))
+        {
+            <p class="mb-1"><b>Description:</b> @ev.Description</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(ev.Category))
+        {
+            <p class="mb-1"><b>Category:</b> @ev.Category</p>
+        }
+
+        <p class="mb-2"><b>Participants:</b> @(ev.Subscriptions?.Count ?? 0) / @ev.MaxParticipants</p>
+
+        <div class="mt-2">
+            <button type="button"
+                    class="btn @(isSubscribed ? "btn-outline-danger" : "btn-success")"
+                    disabled="@(!isSubscribed && isFull)"
+                    @onclick="ToggleSubscription">
+                @(isSubscribed ? "Unsubscribe" : (isFull ? "Event Full" : "Subscribe"))
+            </button>
+
+            <a class="btn btn-sm btn-outline-secondary rounded-pill ms-2 d-inline-flex align-items-center px-3" href="/">
+                <span class="oi oi-arrow-left me-2" aria-hidden="true"></span>
+                Back
+            </a>
+        </div>
 
         @if (!string.IsNullOrEmpty(message))
         {
-            <div class="alert alert-info mt-2">@message</div>
+            <div class="alert @alertClass mt-3 mb-0">@message</div>
         }
     </div>
 }
 
+
 @code {
     [Parameter] public int Id { get; set; }
+
     private Event? ev;
     private string? message;
+    private string alertClass = "alert-info";
     private bool loading = true;
+
+    private int? currentUserId;
+    private bool isSubscribed;
+    private bool isFull => (ev?.Subscriptions?.Count ?? 0) >= (ev?.MaxParticipants ?? 0);
 
     protected override async Task OnInitializedAsync()
     {
+        // prendo un utente esistente (demo) dal DB
+        currentUserId = await EventService.GetAnyUserIdAsync();
+
         ev = await EventService.GetByIdAsync(Id);
         loading = false;
-        if (ev == null) message = "Event not found or it may have been deleted.";
+
+        if (ev == null)
+        {
+            message = "Event not found or it may have been deleted.";
+            return;
+        }
+
+        if (currentUserId != null)
+            isSubscribed = await EventService.IsSubscribedAsync(Id, currentUserId.Value);
     }
 
-    private async Task Subscribe()
+    private async Task ToggleSubscription()
     {
-        // For now dummy userId = 1
-        var success = await EventService.SubscribeAsync(Id, 1);
-        message = success ? "Successfully subscribed!" : "Subscription failed.";
+        if (currentUserId is null)
+        {
+            alertClass = "alert-danger";
+            message = "Nessun utente demo presente.";
+            return;
+        }
+
+        if (!isSubscribed)
+        {
+            var result = await EventService.SubscribeAsync(Id, currentUserId.Value);
+
+            switch (result)
+            {
+                case SubscribeResult.Success:
+                    alertClass = "alert-success";
+                    message = "Successfully subscribed!";
+                    isSubscribed = true;
+                    break;
+                case SubscribeResult.AlreadySubscribed:
+                    alertClass = "alert-warning";
+                    message = "You are already subscribed to this event.";
+                    isSubscribed = true;
+                    break;
+                case SubscribeResult.EventFull:
+                    alertClass = "alert-danger";
+                    message = "Sorry, this event is full.";
+                    break;
+                case SubscribeResult.UserNotFound:
+                    alertClass = "alert-danger";
+                    message = "User not found.";
+                    break;
+                default:
+                    alertClass = "alert-danger";
+                    message = "Subscription failed.";
+                    break;
+            }
+        }
+        else
+        {
+            var ok = await EventService.UnsubscribeAsync(Id, currentUserId.Value);
+            if (ok)
+            {
+                alertClass = "alert-info";
+                message = "Unsubscribed.";
+                isSubscribed = false;
+            }
+            else
+            {
+                alertClass = "alert-danger";
+                message = "Unsubscribe failed.";
+            }
+        }
+
+        // ricarica i dati per aggiornare il conteggio
         ev = await EventService.GetByIdAsync(Id);
+        StateHasChanged();
     }
 }
+
