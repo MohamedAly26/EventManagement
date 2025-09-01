@@ -1,50 +1,72 @@
-﻿@using Microsoft.AspNetCore.Identity
+﻿@using System.Security.Claims
 @using Microsoft.AspNetCore.Components.Authorization
 @inject NavigationManager Nav
 
-<nav class="nav flex-column">
-    <NavLink href="/" Match="NavLinkMatch.All" class="nav-link">
-        <span class="oi oi-home me-2"></span>Home
-    </NavLink>
+<nav class="sidebar p-3">
+    <div class="brand fw-bold mb-3">EventManagement</div>
 
-    <!-- My Subscriptions solo per utenti NON Admin -->
+    <!-- ADMIN ONLY -->
     <AuthorizeView Roles="Admin">
         <Authorized>
-            @* niente *@
+            <NavLink href="/admin/events" Match="NavLinkMatch.All" class="nav-link rounded">
+                <span class="oi oi-cog me-2"></span>Admin Dashboard
+            </NavLink>
         </Authorized>
+    </AuthorizeView>
+
+    <!-- AUTHENTICATED NON-ADMIN -->
+    <AuthorizeView Context="auth">
+        <Authorized>
+            @if (!auth.User.IsInRole("Admin"))
+            {
+                <NavLink href="/" Match="NavLinkMatch.All" class="nav-link rounded">
+                    <span class="oi oi-home me-2"></span>Home
+                </NavLink>
+
+                <NavLink href="/me/subscriptions" class="nav-link rounded">
+                    <span class="oi oi-list me-2"></span>My Dashboard
+                </NavLink>
+            }
+        </Authorized>
+
+        <!-- ANONYMOUS -->
         <NotAuthorized>
-            <NavLink href="/me/subscriptions" class="nav-link">
-                <span class="oi oi-list me-2"></span>My Subscriptions
+            <NavLink href="/" Match="NavLinkMatch.All" class="nav-link rounded">
+                <span class="oi oi-home me-2"></span>Home
             </NavLink>
         </NotAuthorized>
     </AuthorizeView>
 
-    <!-- Link Admin visibile solo agli Admin -->
-    <AuthorizeView Roles="Admin">
-        <Authorized>
-            <NavLink href="/admin/events" class="nav-link">
-                <span class="oi oi-cog me-2"></span>Admin
-            </NavLink>
-        </Authorized>
-    </AuthorizeView>
-
-
+    <!-- GREETING + AUTH LINKS -->
     <div class="mt-3">
-        <AuthorizeView>
+        <AuthorizeView Context="auth">
             <Authorized>
-                <div class="small text-muted px-3">Hello, @context.User.Identity?.Name</div>
+                @{
+                    var u = auth.User;
+                    string display = u.IsInRole("Admin")
+                    ? "Admin"
+                    : (u.FindFirst("name")?.Value
+                    ?? u.FindFirst(ClaimTypes.GivenName)?.Value
+                    ?? u.FindFirst(ClaimTypes.Name)?.Value
+                    ?? u.FindFirst(ClaimTypes.Email)?.Value
+                    ?? u.Identity?.Name
+                    ?? "User");
+
+                    if (display.Contains("@")) display = display[..display.IndexOf('@')];
+                }
+                <div class="small text-muted px-1 mb-2">Hello, <b>@display</b></div>
+
                 <form method="post" action="/app-logout" class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-secondary">Logout</button>
+                    <button type="submit" class="btn btn-sm btn-outline-light w-100">Logout</button>
                 </form>
             </Authorized>
+
             <NotAuthorized>
-                <NavLink href="/account/login" class="nav-link">Login</NavLink>
-                <NavLink href="/account/register" class="nav-link">Register</NavLink>
+                <NavLink href="/account/login" class="nav-link rounded">Login</NavLink>
+                <NavLink href="/account/register" class="nav-link rounded">Register</NavLink>
             </NotAuthorized>
         </AuthorizeView>
     </div>
 </nav>
 
-@code {
- 
-}
+@code { }

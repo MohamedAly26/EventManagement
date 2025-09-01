@@ -21,23 +21,23 @@ public class EventService
     // -------------------- Lettura Eventi --------------------
 
     public async Task<List<Event>> GetAllAsync()
-        => await _db.Events
-            .AsNoTracking()
-            .Include(e => e.Subscriptions)
-            .OrderBy(e => e.StartDateTime)
-            .ToListAsync();
+     => await _db.Events
+         .AsNoTracking()
+         .Include(e => e.Subscriptions)
+         .OrderBy(e => e.StartDateTime)
+         .ToListAsync();
 
-    public async Task<Event?> GetByIdAsync(int id)
-        => await _db.Events
+    public async Task<Event?> GetByIdAsync(int id) =>
+        await _db.Events
             .AsNoTracking()
             .Include(e => e.Subscriptions)
             .FirstOrDefaultAsync(e => e.Id == id);
 
-    public async Task<List<string>> GetCategoriesAsync()
-        => await _db.Events
+    public async Task<List<string>> GetCategoriesAsync() =>
+        await _db.Events
             .AsNoTracking()
             .Where(e => !string.IsNullOrWhiteSpace(e.Category))
-            .Select(e => e.Category!)     // ok: filtrato sopra
+            .Select(e => e.Category!) // safe: filtrato sopra
             .Distinct()
             .OrderBy(c => c)
             .ToListAsync();
@@ -83,12 +83,12 @@ public class EventService
 
     // -------------------- Iscrizioni --------------------
 
-    public Task<bool> IsSubscribedAsync(int eventId, string userId)
-        => _db.Subscriptions.AnyAsync(s => s.EventId == eventId && s.UserId == userId);
+    public Task<bool> IsSubscribedAsync(int eventId, string userId) =>
+        _db.Subscriptions.AnyAsync(s => s.EventId == eventId && s.UserId == userId);
 
     public async Task<SubscribeResult> SubscribeAsync(int eventId, string userId)
     {
-        // prendo solo ciò che serve dell'evento (Id/MaxParticipants), senza navigation
+        // keep the checks as-is...
         var ev = await _db.Events
             .AsNoTracking()
             .Select(e => new { e.Id, e.MaxParticipants })
@@ -106,10 +106,18 @@ public class EventService
         if (currentCount >= ev.MaxParticipants)
             return SubscribeResult.EventFull;
 
-        _db.Subscriptions.Add(new Subscription { EventId = eventId, UserId = userId });
+        // ✅ set DataSubscription so NOT NULL is satisfied
+        _db.Subscriptions.Add(new Subscription
+        {
+            EventId = eventId,
+            UserId = userId,
+            DataSubscription = DateTime.UtcNow   // <- important
+        });
+
         await _db.SaveChangesAsync();
         return SubscribeResult.Success;
     }
+
 
     public async Task<bool> UnsubscribeAsync(int eventId, string userId)
     {
@@ -133,17 +141,19 @@ public class EventService
         if (!includePast)
             query = query.Where(e => e.StartDateTime >= DateTime.Now);
 
-        return await query.OrderBy(e => e.StartDateTime).ToListAsync();
+        return await query
+            .OrderBy(e => e.StartDateTime)
+            .ToListAsync();
     }
 
     public record EventSubscriber(string UserId, string? Email, string? UserName, DateTime CreatedAt);
 
-    public async Task<List<EventSubscriber>> GetSubscribersForEventAsync(int eventId)
-        => await _db.Subscriptions
+    public async Task<List<EventSubscriber>> GetSubscribersForEventAsync(int eventId) =>
+        await _db.Subscriptions
             .AsNoTracking()
             .Where(s => s.EventId == eventId)
             .Include(s => s.User)
-            .OrderBy(s => s.DataSubscription)
+            .OrderBy(s => s.DataSubscription) // <-- proprietà attuale del model
             .Select(s => new EventSubscriber(
                 s.UserId,
                 s.User != null ? s.User.Email : null,
@@ -175,8 +185,72 @@ public class EventService
         var ev = await _db.Events.FindAsync(id);
         if (ev is null) return false;
 
-        _db.Events.Remove(ev);                    // Subscriptions verranno rimosse in CASCADE (configurato nel DbContext)
+        // Subscriptions verranno rimosse in CASCADE (configurato nel DbContext)
+        _db.Events.Remove(ev);
         await _db.SaveChangesAsync();
         return true;
     }
+
+    // -------------------- Stats & quick summaries --------------------
+
+    public record EventStats(int TotalEvents, int Upcoming, int TotalSubscriptions, int SeatsCapacity, int SeatsTaken);
+    public record EventSummary(int Id, string Title, DateTime StartDateTime, int SubsCount, int MaxParticipants);
+
+    public async Task<EventStats> GetBasicStatsAsync()
+    {
+        var now = DateTime.Now;
+
+        var totalEventsTask = _db.Events.CountAsync();
+        var upcomingTask = _db.Events.CountAsync(e => e.StartDateTime >= now);
+        var totalSubsTask = _db.Subscriptions.CountAsync();
+        var capacityTask = _db.Events.SumAsync(e => e.MaxParticipants);
+
+        await Task.WhenAll(totalEventsTask, upcomingTask, totalSubsTask, capacityTask);
+
+        return new EventStats(
+            totalEventsTask.Result,
+            upcomingTask.Result,
+            totalSubsTask.Result,
+            capacityTask.Result,
+            totalSubsTask.Result   // posti occupati = totale iscrizioni
+        );
+    }
+
+    public async Task<List<EventSummary>> GetUpcomingSummariesAsync(int take = 5)
+    {
+        // hardening parametro
+        if (take < 1) take = 1;
+        if (take > 50) take = 50;
+
+        var now = DateTime.Now;
+
+        return await _db.Events
+            .AsNoTracking()
+            .Where(e => e.StartDateTime >= now)
+            .OrderBy(e => e.StartDateTime)
+            .Select(e => new EventSummary(
+                e.Id,
+                e.Title ?? "(untitled)",
+                e.StartDateTime,
+                e.Subscriptions.Count(),
+                e.MaxParticipants
+            ))
+            .Take(take)
+            .ToListAsync();
+    }
+    public record AdminEventRow(int Id, string Title, DateTime StartDateTime, string? Location, int Subs, int MaxParticipants);
+
+    public Task<List<AdminEventRow>> GetAdminEventRowsAsync() =>
+        _db.Events
+           .AsNoTracking()
+           .OrderBy(e => e.StartDateTime)
+           .Select(e => new AdminEventRow(
+               e.Id,
+               e.Title ?? "(untitled)",
+               e.StartDateTime,
+               e.Location,
+               e.Subscriptions.Count(),   // conteggio in SQL, senza Include
+               e.MaxParticipants))
+           .ToListAsync();
+
 }
