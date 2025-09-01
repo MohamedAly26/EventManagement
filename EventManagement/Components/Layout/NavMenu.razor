@@ -1,6 +1,5 @@
 ﻿@using Microsoft.AspNetCore.Identity
 @using Microsoft.AspNetCore.Components.Authorization
-@inject SignInManager<IdentityUser> SignInManager
 @inject NavigationManager Nav
 
 <nav class="nav flex-column">
@@ -34,9 +33,9 @@
         <AuthorizeView>
             <Authorized>
                 <div class="small text-muted px-3">Hello, @context.User.Identity?.Name</div>
-                <button class="btn btn-sm btn-outline-secondary ms-3 mt-2" @onclick="Logout">
-                    Logout
-                </button>
+                <form method="post" action="/app-logout" class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Logout</button>
+                </form>
             </Authorized>
             <NotAuthorized>
                 <NavLink href="/account/login" class="nav-link">Login</NavLink>
@@ -47,9 +46,5 @@
 </nav>
 
 @code {
-    private async Task Logout()
-    {
-        await SignInManager.SignOutAsync();
-        Nav.NavigateTo("/", forceLoad: true);
-    }
+ 
 }

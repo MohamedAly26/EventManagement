@@ -133,5 +133,9 @@ using (var scope = app.Services.CreateScope())
         await userMgr.AddToRoleAsync(admin, "Admin");
     }
 }
-
+app.MapPost("/app-logout", async (SignInManager<IdentityUser> signIn) =>
+{
+    await signIn.SignOutAsync();     // invalida il cookie
+    return Results.Redirect("/");    // torna alla home
+}).DisableAntiforgery();
 app.Run();

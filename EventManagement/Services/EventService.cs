@@ -143,12 +143,12 @@ public class EventService
             .AsNoTracking()
             .Where(s => s.EventId == eventId)
             .Include(s => s.User)
-            .OrderBy(s => s.CreatedAt)
+            .OrderBy(s => s.DataSubscription)
             .Select(s => new EventSubscriber(
                 s.UserId,
                 s.User != null ? s.User.Email : null,
                 s.User != null ? s.User.UserName : null,
-                s.CreatedAt))
+                s.DataSubscription))
             .ToListAsync();
 
     // -------------------- CRUD Eventi (Admin) --------------------
