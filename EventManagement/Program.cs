@@ -27,6 +27,7 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 
+
 builder.Services
     .AddIdentityCore<IdentityUser>(options =>
     {
