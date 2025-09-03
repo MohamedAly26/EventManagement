@@ -4,9 +4,7 @@
 @using System.Security.Claims
 @using EventManagement.Models
 @using EventManagement.Services
-@using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Authorization
-
 @inject EventService EventService
 @inject AuthenticationStateProvider AuthProvider
 @inject NavigationManager Nav
@@ -15,9 +13,7 @@
 
 @if (loading)
 {
-    <div class="spinner-border" role="status">
-        <span class="visually-hidden">Loading...</span>
-    </div>
+    <div class="spinner-border" role="status"><span class="visually-hidden">Loading…</span></div>
 }
 else if (ev is null)
 {
@@ -92,57 +88,60 @@ else
     private string? message;
     private string alertClass = "alert-info";
 
-    [CascadingParameter] private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
-
     private string? currentUserId;
+    private bool isAdmin;
     private bool isSubscribed;
+
     private bool isFull => (ev?.Subscriptions?.Count ?? 0) >= (ev?.MaxParticipants ?? 0);
     private bool isClosed => ev is not null && ev.StartDateTime <= DateTime.Now;
-    private bool CanInteract => !isSubscribed && !isFull && !isClosed && !string.IsNullOrEmpty(currentUserId);
+
+    // User can click if:
+    // - NOT admin, and logged in, and
+    // - either already subscribed (to allow Unsubscribe), or event is open for new subscriptions
+    private bool CanInteract =>
+        !isAdmin &&
+        !string.IsNullOrEmpty(currentUserId) &&
+        (isSubscribed || (!isFull && !isClosed));
 
     protected override async Task OnInitializedAsync()
     {
-        try
+        // Load event first
+        ev = await EventService.GetByIdAsync(Id);
+
+        // Robust auth resolution
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity?.IsAuthenticated == true)
         {
-            // Load event first
-            ev = await EventService.GetByIdAsync(Id);
+            isAdmin = user.IsInRole("Admin");
+            currentUserId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
-            // Resolve auth state robustly (works with or without CascadingAuthenticationState)
-            var authState =
-                AuthenticationStateTask is not null
-                    ? await AuthenticationStateTask
-                    : await AuthProvider.GetAuthenticationStateAsync();
-
-            var user = authState.User;
-            if (user.Identity?.IsAuthenticated == true)
+            if (!string.IsNullOrEmpty(currentUserId) && ev is not null)
             {
-                currentUserId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                if (!string.IsNullOrEmpty(currentUserId) && ev is not null)
-                {
-                    isSubscribed = await EventService.IsSubscribedAsync(Id, currentUserId);
-                }
-            }
-
-            loading = false;
-
-            if (ev is null)
-            {
-                message = "Event not found or it may have been deleted.";
-                alertClass = "alert-warning";
+                isSubscribed = await EventService.IsSubscribedAsync(Id, currentUserId);
             }
         }
-        catch (Exception ex)
+
+        loading = false;
+
+        if (ev is null)
         {
-            loading = false;
-            alertClass = "alert-danger";
-            message = "An unexpected error occurred while loading the event.";
-            Console.Error.WriteLine(ex);
+            alertClass = "alert-warning";
+            message = "Event not found or it may have been deleted.";
         }
     }
 
     private async Task ToggleSubscription()
     {
         if (ev is null) return;
+
+        if (isAdmin)
+        {
+            alertClass = "alert-info";
+            message = "Admins cannot subscribe to events.";
+            return;
+        }
 
         if (string.IsNullOrEmpty(currentUserId))
         {
@@ -156,36 +155,19 @@ else
             if (!isSubscribed)
             {
                 var result = await EventService.SubscribeAsync(Id, currentUserId);
-
                 switch (result)
                 {
                     case SubscribeResult.Success:
-                        alertClass = "alert-success";
-                        message = "Successfully subscribed.";
-                        isSubscribed = true;
-                        break;
-
+                        alertClass = "alert-success"; message = "Successfully subscribed."; isSubscribed = true; break;
                     case SubscribeResult.AlreadySubscribed:
-                        alertClass = "alert-info";
-                        message = "You are already subscribed.";
-                        isSubscribed = true;
-                        break;
-
+                        alertClass = "alert-info"; message = "You are already subscribed."; isSubscribed = true; break;
                     case SubscribeResult.EventFull:
-                        alertClass = "alert-danger";
-                        message = "Sorry, the event is full.";
-                        break;
-
+                        alertClass = "alert-danger"; message = "Sorry, the event is full."; break;
                     case SubscribeResult.UserNotFound:
-                        alertClass = "alert-danger";
-                        message = "User not found.";
-                        break;
-
+                        alertClass = "alert-danger"; message = "User not found."; break;
                     case SubscribeResult.EventNotFound:
                     default:
-                        alertClass = "alert-danger";
-                        message = "Event not found.";
-                        break;
+                        alertClass = "alert-danger"; message = "Event not found."; break;
                 }
             }
             else
@@ -193,14 +175,11 @@ else
                 var ok = await EventService.UnsubscribeAsync(Id, currentUserId);
                 if (ok)
                 {
-                    alertClass = "alert-info";
-                    message = "Unsubscribed.";
-                    isSubscribed = false;
+                    alertClass = "alert-info"; message = "Unsubscribed."; isSubscribed = false;
                 }
                 else
                 {
-                    alertClass = "alert-danger";
-                    message = "Unsubscribe failed.";
+                    alertClass = "alert-danger"; message = "Unsubscribe failed.";
                 }
             }
 

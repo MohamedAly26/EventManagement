@@ -2,9 +2,12 @@
 @page "/admin/events/edit/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Admin")]
+
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
 @using EventManagement.Services
 @using EventManagement.Models
+
 @inject EventService EventService
 @inject NavigationManager Nav
 
@@ -33,11 +36,13 @@ else
 
             <div class="col-md-6">
                 <label class="form-label">Date &amp; time</label>
-                <!-- bind a DateTime, non a string -->
-                <input class="form-control"
-                       type="datetime-local"
-                       @bind-value="startLocal"
-                       @bind-value:format="yyyy-MM-ddTHH:mm" />
+
+                <!-- Force string binding via InputText so we avoid the Date/Time binders -->
+                <InputText class="form-control"
+                           type="datetime-local"
+                           @bind-Value="StartLocalText"
+                           step="60"
+                           min="@MinLocalText" />
             </div>
 
             <div class="col-md-6">
@@ -75,8 +80,26 @@ else
     private Event model = new();
     private bool loading = true;
 
-    // 👉 binding per <input type="datetime-local">
-    private DateTime startLocal;
+    // Internal local DateTime (rounded to minute)
+    private DateTime _startLocal;
+
+    // The string value bound to the datetime-local input (yyyy-MM-ddTHH:mm)
+    private string StartLocalText
+    {
+        get => _startLocal.ToString("yyyy-MM-ddTHH:mm");
+        set
+        {
+            // datetime-local always posts in this invariant format
+            if (DateTime.TryParse(value, out var dt))
+            {
+                _startLocal = DateTime.SpecifyKind(dt, DateTimeKind.Local);
+                _startLocal = RoundToMinute(_startLocal);
+            }
+        }
+    }
+
+    // Minimum allowed date-time (optional; remove if you want to allow past)
+    private string MinLocalText => RoundToMinute(DateTime.Now).ToString("yyyy-MM-ddTHH:mm");
 
     private string? message;
     private string alertClass = "alert-info";
@@ -103,18 +126,22 @@ else
         }
 
         if (model.StartDateTime == default)
-            model.StartDateTime = DateTime.Now.AddDays(1);
+        {
+            model.StartDateTime = RoundToMinute(DateTime.Now.AddDays(1));
+        }
 
-        // inizializza il DateTime per il controllo
-        startLocal = model.StartDateTime;
+        // Initialize the local copy (explicit Local kind)
+        _startLocal = model.StartDateTime.Kind == DateTimeKind.Local
+            ? RoundToMinute(model.StartDateTime)
+            : RoundToMinute(DateTime.SpecifyKind(model.StartDateTime, DateTimeKind.Local));
 
         loading = false;
     }
 
     private async Task Save()
     {
-        // mappa dal controllo al modello
-        model.StartDateTime = startLocal;
+        // Map selected date-time back to the model
+        model.StartDateTime = _startLocal;
 
         if (model.Id == 0)
         {
@@ -139,4 +166,7 @@ else
             }
         }
     }
+
+    private static DateTime RoundToMinute(DateTime dt)
+        => new(dt.Year, dt.Month, dt.Day, dt.Hour, dt.Minute, 0, dt.Kind);
 }
