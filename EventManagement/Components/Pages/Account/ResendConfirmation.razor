@@ -1,0 +1,85 @@
+﻿@page "/account/resend-confirmation"
+@rendermode InteractiveServer
+
+@using System.ComponentModel.DataAnnotations
+@using System.Text
+@using System.Text.Encodings.Web
+@using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.AspNetCore.Identity
+@using EmailSenderAbstraction = Microsoft.AspNetCore.Identity.UI.Services.IEmailSender
+
+@inject UserManager<IdentityUser> UserManager
+@inject EmailSenderAbstraction EmailSender
+@inject NavigationManager Nav
+
+<h3>Resend confirmation email</h3>
+
+@if (sent)
+{
+    <div class="alert alert-info">
+        If an account exists for <b>@Model.Email</b>, a new confirmation link has been sent.
+    </div>
+}
+else
+{
+    <EditForm Model="Model" OnValidSubmit="Send">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="mb-3">
+            <label class="form-label">Email</label>
+            <InputText class="form-control" @bind-Value="Model.Email" />
+        </div>
+
+        <button class="btn btn-primary" type="submit">Send link</button>
+
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert alert-danger mt-3">@((MarkupString)error)</div>
+        }
+    </EditForm>
+}
+
+@code {
+    public class ResendInput
+    {
+        [Required, EmailAddress]
+        public string Email { get; set; } = string.Empty;
+    }
+
+    private ResendInput Model { get; set; } = new();
+    private bool sent;
+    private string? error;
+
+    private async Task Send()
+    {
+        error = null;
+
+        try
+        {
+            var user = await UserManager.FindByEmailAsync(Model.Email);
+            if (user is not null && !user.EmailConfirmed)
+            {
+                var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
+                var enc = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
+                var baseUri = Nav.BaseUri.TrimEnd('/');
+                var link = $"{baseUri}/account/confirm?userId={Uri.EscapeDataString(user.Id)}&code={Uri.EscapeDataString(enc)}";
+
+                var safeLink = HtmlEncoder.Default.Encode(link);
+                var body =
+                    "<p>Please confirm your account:</p>" +
+                    "<p><a href=\"" + safeLink + "\">Confirm my email</a></p>";
+
+                await EmailSender.SendEmailAsync(user.Email!, "Confirm your email", body);
+            }
+
+            // Risposta neutra sempre
+            sent = true;
+        }
+        catch (Exception ex)
+        {
+            error = "An unexpected error occurred.";
+            Console.Error.WriteLine(ex);
+        }
+    }
+}

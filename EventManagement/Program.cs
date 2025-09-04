@@ -2,8 +2,13 @@
 using EventManagement.Data;
 using EventManagement.Models;
 using EventManagement.Services;
+using Microsoft.AspNetCore.Builder.Extensions;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.WebUtilities;
+using System.Text;
+using System.Text.Encodings.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,20 +33,37 @@ builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 
 
+// SMTP settings from configuration
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+
+// Register our SMTP sender for Identity's IEmailSender
+builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+
+// Identity with tokens (confirmation)
 builder.Services
     .AddIdentityCore<IdentityUser>(options =>
     {
+        options.SignIn.RequireConfirmedEmail = true;
+        options.User.RequireUniqueEmail = true;
+
         options.Password.RequireNonAlphanumeric = false;
         options.Password.RequireUppercase = false;
         options.Password.RequireLowercase = false;
         options.Password.RequireDigit = false;
         options.Password.RequiredLength = 6;
+        options.SignIn.RequireConfirmedAccount = true;
+        options.SignIn.RequireConfirmedEmail = true;
     })
     .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<AppDbContext>()
     .AddSignInManager()
-    .AddApiEndpoints();
+    .AddApiEndpoints()
+    .AddDefaultTokenProviders(); // <-- important
 
+// Email sender (alias dell'interfaccia UI)
+builder.Services.AddTransient<
+    Microsoft.AspNetCore.Identity.UI.Services.IEmailSender,
+    EventManagement.Services.SmtpEmailSender>();
 
 // --- BUILD ---
 var app = builder.Build();
