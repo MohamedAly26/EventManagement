@@ -9,10 +9,11 @@ namespace EventManagement.Services
     {
         public string Host { get; set; } = "";
         public int Port { get; set; } = 587;
-        public string User { get; set; } = "";
-        public string Pass { get; set; } = "";
-        public string From { get; set; } = "noreply@example.com";
-        public string FromName { get; set; } = "EventManagement";
+        public bool EnableSsl { get; set; } = true;
+
+        public string User { get; set; } = "mohamedessamrere@gmail.com";      // es. you@gmail.com
+        public string Password { get; set; } = "mohamedessamalym";  // App Password o credenziali SMTP
+        public string From { get; set; } = "EventManagement <mohamedessamrere@gmail.com>";      // es. "EventManagement <you@gmail.com>"
     }
 
     // Implements Identity's IEmailSender
@@ -35,12 +36,12 @@ namespace EventManagement.Services
             using var client = new SmtpClient(_o.Host, _o.Port)
             {
                 EnableSsl = true,
-                Credentials = new NetworkCredential(_o.User, _o.Pass)
+                Credentials = new NetworkCredential(_o.User, _o.Password)
             };
 
             using var msg = new MailMessage
             {
-                From = new MailAddress(_o.From, _o.FromName),
+                From = new MailAddress(_o.From, _o.From),
                 Subject = subject,
                 Body = htmlBody,
                 IsBodyHtml = true

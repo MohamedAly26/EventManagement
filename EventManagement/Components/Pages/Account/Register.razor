@@ -1,128 +1,59 @@
 ﻿@page "/account/register"
 @rendermode InteractiveServer
 
-@using System.ComponentModel.DataAnnotations
-@using System.Security.Claims
-@using Microsoft.AspNetCore.Identity
-@using Microsoft.AspNetCore.WebUtilities
-@using System.Text
-@using System.Text.Encodings.Web
-@using EmailSenderAbstraction = Microsoft.AspNetCore.Identity.UI.Services.IEmailSender
-
-@inject UserManager<IdentityUser> UserManager
-@inject SignInManager<IdentityUser> SignInManager
-@inject EmailSenderAbstraction EmailSender
-@inject NavigationManager Nav
-
 <h3>Register</h3>
 
-@if (done)
+@if (!string.IsNullOrEmpty(error))
 {
-    <div class="alert alert-success">
-        Thanks, <b>@Input.Name</b>! We sent a confirmation link to <b>@Input.Email</b>.
-        Please check your inbox and then <a href="/account/login">log in</a>.
+    <div class="alert alert-danger">@error</div>
+}
+@if (ok)
+{
+    <div class="alert alert-success">Check your inbox to confirm your email.</div>
+}
+
+<form method="post" action="/app-register">
+    <div class="mb-3">
+        <label class="form-label">Name</label>
+        <input class="form-control" name="name" />
     </div>
-}
-else
-{
-    <EditForm Model="Input" OnValidSubmit="OnSubmit">
-        <DataAnnotationsValidator />
-        <ValidationSummary />
 
-        <div class="mb-2">
-            <label class="form-label">Name</label>
-            <InputText class="form-control" @bind-Value="Input.Name" />
-        </div>
+    <div class="mb-3">
+        <label class="form-label">Email</label>
+        <input class="form-control" name="email" type="email" required />
+    </div>
 
-        <div class="mb-2">
-            <label class="form-label">Email</label>
-            <InputText class="form-control" @bind-Value="Input.Email" />
-        </div>
+    <div class="mb-3">
+        <label class="form-label">Password</label>
+        <input class="form-control" name="password" type="password" required />
+    </div>
 
-        <div class="mb-2">
-            <label class="form-label">Password</label>
-            <InputText class="form-control" type="password" @bind-Value="Input.Password" />
-        </div>
+    <div class="mb-3">
+        <label class="form-label">Confirm password</label>
+        <input class="form-control" name="password2" type="password" required />
+    </div>
 
-        <div class="mb-3">
-            <label class="form-label">Confirm password</label>
-            <InputText class="form-control" type="password" @bind-Value="Input.ConfirmPassword" />
-        </div>
-
-        <button class="btn btn-primary" type="submit">Create account</button>
-        <a class="btn btn-link" href="/account/login">Login</a>
-
-        @if (!string.IsNullOrEmpty(error))
-        {
-            <div class="alert alert-danger mt-3">@((MarkupString)error)</div>
-        }
-    </EditForm>
-}
+    <button class="btn btn-primary" type="submit">Create account</button>
+    <a class="btn btn-link" href="/account/login">Login</a>
+</form>
 
 @code {
-    private bool done;
+    [Parameter] public string? e { get; set; }
+    [Parameter] public string? okparam { get; set; }
+
     private string? error;
+    private bool ok;
 
-    public class RegisterInput
+    protected override void OnParametersSet()
     {
-        [Required, StringLength(100)]
-        public string Name { get; set; } = string.Empty;
+        var uri = new Uri(NavigationManager.Uri);
+        var q = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
 
-        [Required, EmailAddress]
-        public string Email { get; set; } = string.Empty;
-
-        [Required, MinLength(6)]
-        public string Password { get; set; } = string.Empty;
-
-        [Compare(nameof(Password), ErrorMessage = "Passwords do not match.")]
-        public string ConfirmPassword { get; set; } = string.Empty;
+        if (q.TryGetValue("e", out var ev))
+            error = ev.ToString().Replace('+', ' ');
+        if (q.TryGetValue("ok", out var okv))
+            ok = okv == "1";
     }
 
-    private RegisterInput Input { get; set; } = new();
-
-    private async Task OnSubmit()
-    {
-        error = null;
-
-        var user = new IdentityUser
-        {
-            UserName = Input.Email,
-            Email = Input.Email,
-            EmailConfirmed = false
-        };
-
-        var res = await UserManager.CreateAsync(user, Input.Password);
-        if (!res.Succeeded)
-        {
-            error = string.Join("<br/>", res.Errors.Select(e => e.Description));
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(Input.Name))
-        {
-            await UserManager.AddClaimAsync(user, new Claim("name", Input.Name));
-        }
-
-        // Build confirmation link
-        var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
-        var codeBytes = Encoding.UTF8.GetBytes(code);
-        var codeEnc = WebEncoders.Base64UrlEncode(codeBytes);
-        var baseUri = Nav.BaseUri.TrimEnd('/');
-        var confirmUrl = $"{baseUri}/account/confirm?userId={Uri.EscapeDataString(user.Id)}&code={Uri.EscapeDataString(codeEnc)}";
-
-        // Email body WITHOUT raw string literal (works on older C#)
-        var safeName = HtmlEncoder.Default.Encode(Input.Name ?? string.Empty);
-        var safeLink = HtmlEncoder.Default.Encode(confirmUrl);
-
-        var body =
-            "<p>Hi " + safeName + ",</p>" +
-            "<p>Please confirm your account by clicking the link below:</p>" +
-            "<p><a href=\"" + safeLink + "\">Confirm my email</a></p>" +
-            "<p>If you didn’t create this account, you can ignore this email.</p>";
-
-        await EmailSender.SendEmailAsync(user.Email!, "Confirm your email", body);
-
-        done = true;
-        StateHasChanged();
-    }
+    [Inject] NavigationManager NavigationManager { get; set; } = default!;
 }

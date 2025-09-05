@@ -1,84 +1,49 @@
 ﻿@page "/account/login"
 @rendermode InteractiveServer
 
-@using System.ComponentModel.DataAnnotations
-@using Microsoft.AspNetCore.Identity
-
-@inject SignInManager<IdentityUser> SignInManager
-@inject UserManager<IdentityUser> UserManager
+@using Microsoft.AspNetCore.WebUtilities
 @inject NavigationManager Nav
 
 <h3>Login</h3>
 
-<EditForm Model="Input" OnValidSubmit="OnSubmit">
-    <DataAnnotationsValidator />
-    <ValidationSummary />
+@if (!string.IsNullOrEmpty(_err))
+{
+    <div class="alert alert-@(_err == "confirm" ? "warning" : "danger")">
+        @(
+            _err switch
+            {
+                "confirm" => "Please confirm your email before logging in.",
+                "invalid" => "Invalid email or password.",
+                "err" => "Unexpected error. Try again.",
+                _ => "Login failed."
+            }
+            )
+</div>
+}
 
-    <div class="mb-2">
+<form method="post" action="/app-login" class="card p-3" autocomplete="on">
+    <div class="mb-3">
         <label class="form-label">Email</label>
-        <InputText class="form-control" @bind-Value="Input.Email" />
+        <input name="email" type="email" class="form-control" required />
     </div>
 
     <div class="mb-3">
         <label class="form-label">Password</label>
-        <InputText class="form-control" type="password" @bind-Value="Input.Password" />
+        <input name="password" type="password" class="form-control" required />
     </div>
 
-    <button class="btn btn-primary" type="submit">Login</button>
+    <button type="submit" class="btn btn-primary">Login</button>
     <a class="btn btn-link" href="/account/register">Register</a>
-
-    @if (!string.IsNullOrEmpty(error))
-    {
-        <div class="alert alert-danger mt-3">@((MarkupString)error)</div>
-    }
-</EditForm>
+</form>
 
 @code {
-    private string? error;
+    private string? _err;
 
-    public class LoginInput
+    protected override void OnParametersSet()
     {
-        [Required, EmailAddress]
-        public string Email { get; set; } = string.Empty;
-
-        [Required]
-        public string Password { get; set; } = string.Empty;
-    }
-
-    private LoginInput Input { get; set; } = new();
-
-    private async Task OnSubmit()
-    {
-        error = null;
-
-        var user = await UserManager.FindByEmailAsync(Input.Email);
-        if (user is null)
-        {
-            error = "Invalid credentials.";
-            return;
-        }
-
-        if (!user.EmailConfirmed)
-        {
-            var resendLink = "/account/resend-confirmation?email=" + Uri.EscapeDataString(Input.Email);
-            error = $"Your email is not confirmed. <a href=\"{resendLink}\">Resend confirmation</a>.";
-            return;
-        }
-
-        var result = await SignInManager.PasswordSignInAsync(
-            user.UserName!, Input.Password, isPersistent: false, lockoutOnFailure: true);
-
-        if (result.Succeeded)
-        {
-            Nav.NavigateTo("/", forceLoad: true);
-        }
-        else if (result.IsLockedOut)
-        {
-            error = "Account locked due to too many attempts. Try again later.";
-        }
-        else
-        {
-            error = "Invalid credentials.";
-        }
+        // Read ?e=... from the URL
+        var uri = new Uri(Nav.Uri);
+        var q = QueryHelpers.ParseQuery(uri.Query);
+        _err = q.TryGetValue("e", out var v) ? v.ToString() : null;
     }
 }
