@@ -1,0 +1,74 @@
+﻿@page "/account/confirm"
+@rendermode InteractiveServer
+
+@using System.Text
+@using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.AspNetCore.Identity
+
+@inject UserManager<IdentityUser> UserManager
+@inject NavigationManager Nav
+
+<h3>Email confirmation</h3>
+
+@if (loading)
+{
+    <div class="spinner-border" role="status"><span class="visually-hidden">Loading…</span></div>
+}
+else if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@((MarkupString)error)</div>
+}
+else if (confirmed)
+{
+    <div class="alert alert-success">
+        Your email has been confirmed. You can now <a href="/account/login">log in</a>.
+    </div>
+}
+else
+{
+    <div class="alert alert-warning">Invalid confirmation request.</div>
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? userId { get; set; }
+    [SupplyParameterFromQuery(Name = "code")] public string? codeEnc { get; set; }
+
+    private bool loading = true;
+    private bool confirmed;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(codeEnc))
+            {
+                error = "Missing parameters.";
+                return;
+            }
+
+            var user = await UserManager.FindByIdAsync(userId);
+            if (user is null)
+            {
+                error = "User not found.";
+                return;
+            }
+
+            var code = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(codeEnc));
+            var res = await UserManager.ConfirmEmailAsync(user, code);
+
+            confirmed = res.Succeeded;
+            if (!res.Succeeded)
+                error = string.Join("<br/>", res.Errors.Select(e => e.Description));
+        }
+        catch (Exception ex)
+        {
+            error = "An unexpected error occurred.";
+            Console.Error.WriteLine(ex);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

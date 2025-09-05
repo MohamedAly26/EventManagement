@@ -134,7 +134,7 @@ public class EventService
     {
         var query = _db.Events
             .AsNoTracking()
-            .Where(e => e.Subscriptions.Any(s => s.UserId == userId))
+            .Where(e => e.Subscriptions!.Any(s => s.UserId == userId))
             .Include(e => e.Subscriptions)
             .AsQueryable();
 
@@ -228,13 +228,13 @@ public class EventService
             .AsNoTracking()
             .Where(e => e.StartDateTime >= now)
             .OrderBy(e => e.StartDateTime)
-            .Select(e => new EventSummary(
+           .Select(e => new EventSummary(
                 e.Id,
                 e.Title ?? "(untitled)",
                 e.StartDateTime,
-                e.Subscriptions.Count(),
+                e.Subscriptions!.Count(),   // nav prop is loaded by EF in the projection
                 e.MaxParticipants
-            ))
+                ))
             .Take(take)
             .ToListAsync();
     }
@@ -249,7 +249,7 @@ public class EventService
                e.Title ?? "(untitled)",
                e.StartDateTime,
                e.Location,
-               e.Subscriptions.Count(),   // conteggio in SQL, senza Include
+               e.Subscriptions!.Count(),   // conteggio in SQL, senza Include
                e.MaxParticipants))
            .ToListAsync();
 

@@ -1,6 +1,5 @@
 ﻿@page "/account/register"
 @rendermode InteractiveServer
-@inject NavigationManager Nav
 
 <h3>Register</h3>
 
@@ -8,31 +7,53 @@
 {
     <div class="alert alert-danger">@error</div>
 }
+@if (ok)
+{
+    <div class="alert alert-success">Check your inbox to confirm your email.</div>
+}
 
 <form method="post" action="/app-register">
-    <div class="mb-2">
+    <div class="mb-3">
         <label class="form-label">Name</label>
         <input class="form-control" name="name" />
     </div>
-    <div class="mb-2">
+
+    <div class="mb-3">
         <label class="form-label">Email</label>
-        <input class="form-control" name="email" />
+        <input class="form-control" name="email" type="email" required />
     </div>
+
     <div class="mb-3">
         <label class="form-label">Password</label>
-        <input class="form-control" type="password" name="password" />
+        <input class="form-control" name="password" type="password" required />
     </div>
+
+    <div class="mb-3">
+        <label class="form-label">Confirm password</label>
+        <input class="form-control" name="password2" type="password" required />
+    </div>
+
     <button class="btn btn-primary" type="submit">Create account</button>
     <a class="btn btn-link" href="/account/login">Login</a>
 </form>
 
 @code {
-    string? error;
+    [Parameter] public string? e { get; set; }
+    [Parameter] public string? okparam { get; set; }
 
-    protected override void OnInitialized()
+    private string? error;
+    private bool ok;
+
+    protected override void OnParametersSet()
     {
-        var uri = new Uri(Nav.Uri);
-        var e = System.Web.HttpUtility.ParseQueryString(uri.Query).Get("e");
-        if (!string.IsNullOrEmpty(e)) error = e;
+        var uri = new Uri(NavigationManager.Uri);
+        var q = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+
+        if (q.TryGetValue("e", out var ev))
+            error = ev.ToString().Replace('+', ' ');
+        if (q.TryGetValue("ok", out var okv))
+            ok = okv == "1";
     }
+
+    [Inject] NavigationManager NavigationManager { get; set; } = default!;
 }
