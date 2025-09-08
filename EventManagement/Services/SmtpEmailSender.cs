@@ -1,54 +1,57 @@
 ﻿using System.Net;
 using System.Net.Mail;
+using EventManagement.Services;
 using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.Extensions.Options;
 
-namespace EventManagement.Services
-{
-    public class SmtpOptions
-    {
-        public string Host { get; set; } = "";
-        public int Port { get; set; } = 587;
-        public bool EnableSsl { get; set; } = true;
+namespace EventManagement.Services;
 
-        public string User { get; set; } = "mohamedessamrere@gmail.com";      // es. you@gmail.com
-        public string Password { get; set; } = "mohamedessamalym";  // App Password o credenziali SMTP
-        public string From { get; set; } = "EventManagement <mohamedessamrere@gmail.com>";      // es. "EventManagement <you@gmail.com>"
+
+public class SmtpEmailSender(IOptions<SmtpOptions> opt, ILogger<SmtpEmailSender> log) : IEmailSender
+{
+    private readonly SmtpOptions _o = opt.Value;
+    private readonly ILogger<SmtpEmailSender> _log = log;
+
+    public async Task SendEmailAsync(string email, string subject, string htmlMessage)
+    {
+        var from = ParseFrom(_o.From ?? _o.User);
+
+        using var msg = new MailMessage
+        {
+            From = from,
+            Subject = subject,
+            Body = htmlMessage,
+            IsBodyHtml = true
+        };
+        msg.To.Add(email);
+
+        using var client = new SmtpClient(_o.Host, _o.Port)
+        {
+            EnableSsl = _o.EnableSsl,
+            UseDefaultCredentials = false,
+            Credentials = new NetworkCredential(_o.User, _o.Password),
+            DeliveryMethod = SmtpDeliveryMethod.Network
+        };
+
+        try
+        {
+            await client.SendMailAsync(msg);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SMTP send failed: Host={Host}, User={User}", _o.Host, _o.User);
+            throw; // fallo emergere: utile in /diag/smtp
+        }
     }
 
-    // Implements Identity's IEmailSender
-    public sealed class SmtpEmailSender : IEmailSender
+    private static MailAddress ParseFrom(string from)
     {
-        private readonly SmtpOptions _o;
-
-        public SmtpEmailSender(IOptions<SmtpOptions> options)
+        if (from.Contains("<") && from.Contains(">"))
         {
-            _o = options.Value;
+            var name = from[..from.IndexOf('<')].Trim();
+            var email = from[(from.IndexOf('<') + 1)..from.IndexOf('>')].Trim();
+            return new MailAddress(email, name);
         }
-
-        // Identity calls this
-        public Task SendEmailAsync(string email, string subject, string htmlMessage)
-            => SendAsync(email, subject, htmlMessage);
-
-        // Internal helper
-        private async Task SendAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
-        {
-            using var client = new SmtpClient(_o.Host, _o.Port)
-            {
-                EnableSsl = true,
-                Credentials = new NetworkCredential(_o.User, _o.Password)
-            };
-
-            using var msg = new MailMessage
-            {
-                From = new MailAddress(_o.From, _o.From),
-                Subject = subject,
-                Body = htmlBody,
-                IsBodyHtml = true
-            };
-            msg.To.Add(toEmail);
-
-            await client.SendMailAsync(msg, ct);
-        }
+        return new MailAddress(from);
     }
 }
