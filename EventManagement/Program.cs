@@ -3,16 +3,31 @@ using EventManagement.Data;
 using EventManagement.Models;
 using EventManagement.Services;
 
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.UI.Services;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using System.Text;
 using System.Text.Encodings.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ---------------------- SERVICES ----------------------
+// ---------------------------------------------------------------------
+// DataProtection so Identity tokens survive restarts (store keys on disk)
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(
+        Path.Combine(builder.Environment.ContentRootPath, "keys")))
+    .SetApplicationName("EventManagement");
+
+// Optionally extend token lifetime (default is ~24h)
+builder.Services.Configure<DataProtectionTokenProviderOptions>(o =>
+{
+    o.TokenLifespan = TimeSpan.FromDays(3);
+});
+
+// ---------------------------------------------------------------------
+// Services
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -35,19 +50,19 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 
-// SMTP configuration + email sender
+// SMTP + email sender
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
-builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>(); // unico IEmailSender
+builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
-// Identity (con token per conferma email)
+// Identity with tokens for email confirmation
 builder.Services
     .AddIdentityCore<IdentityUser>(options =>
     {
         options.SignIn.RequireConfirmedAccount = true;
         options.SignIn.RequireConfirmedEmail = true;
-
         options.User.RequireUniqueEmail = true;
 
+        // dev-friendly password rules
         options.Password.RequireNonAlphanumeric = false;
         options.Password.RequireUppercase = false;
         options.Password.RequireLowercase = false;
@@ -60,10 +75,11 @@ builder.Services
     .AddApiEndpoints()
     .AddDefaultTokenProviders();
 
-// ---------------------- BUILD ----------------------
+// ---------------------------------------------------------------------
 var app = builder.Build();
 
-// ---------------------- PIPELINE ----------------------
+// ---------------------------------------------------------------------
+// Pipeline
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
@@ -73,10 +89,12 @@ app.UseAuthorization();
 app.MapRazorComponents<App>()
    .AddInteractiveServerRenderMode();
 
-// Minimal Identity endpoints (/login, /logout, /register, ecc.)
+// Minimal Identity endpoints (/login, /logout, /register, etc.)
 app.MapIdentityApi<IdentityUser>();
 
-// ---------------------- CUSTOM ENDPOINTS ----------------------
+// ---------------------------------------------------------------------
+// Custom endpoints
+const string ConfirmPath = "/account/confirm-email"; // <- single source of truth
 
 // LOGIN
 app.MapPost("/app-login", async (
@@ -94,18 +112,17 @@ app.MapPost("/app-login", async (
     if (users.Options.SignIn.RequireConfirmedAccount && !user.EmailConfirmed)
         return Results.Redirect("/account/login?e=confirm");
 
-    var result = await signIn.PasswordSignInAsync(user, password, true, false);
-    return result.Succeeded
-        ? Results.Redirect("/")
-        : Results.Redirect("/account/login?e=invalid");
+    var result = await signIn.PasswordSignInAsync(user, password, isPersistent: true, lockoutOnFailure: false);
+    return result.Succeeded ? Results.Redirect("/") : Results.Redirect("/account/login?e=invalid");
 }).DisableAntiforgery();
 
-// REGISTER (invio link conferma)
+// REGISTER (send confirmation link)
 app.MapPost("/app-register", async (
     HttpContext ctx,
     UserManager<IdentityUser> users,
     RoleManager<IdentityRole> roles,
     IEmailSender emailSender,
+    IConfiguration config,
     ILoggerFactory lf) =>
 {
     var log = lf.CreateLogger("Register");
@@ -115,13 +132,7 @@ app.MapPost("/app-register", async (
     var password = form["password"].ToString();
     var name = form["name"].ToString();
 
-    var user = new IdentityUser
-    {
-        UserName = email,
-        Email = email,
-        EmailConfirmed = false
-    };
-
+    var user = new IdentityUser { UserName = email, Email = email, EmailConfirmed = false };
     var create = await users.CreateAsync(user, password);
     if (!create.Succeeded)
     {
@@ -133,35 +144,27 @@ app.MapPost("/app-register", async (
         await roles.CreateAsync(new IdentityRole("User"));
     await users.AddToRoleAsync(user, "User");
 
-    // genera token + codifica URL-safe
     var token = await users.GenerateEmailConfirmationTokenAsync(user);
     var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
 
-    // URL assoluto (NUOVO PERCORSO!)
-    var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
-    var confirmUrl = $"{baseUrl}/account/confirm-email?userId={Uri.EscapeDataString(user.Id)}&code={code}";
+    var baseUrl = BuildBaseUrl(config, ctx);
+    var confirmUrl = $"{baseUrl}{ConfirmPath}?userId={Uri.EscapeDataString(user.Id)}&code={code}";
 
     var subject = "Confirm your email";
     var body = $"""
-                Hi{(string.IsNullOrWhiteSpace(name) ? "" : " " + HtmlEncoder.Default.Encode(name))},
-                <br/>Please confirm your account by
-                <a href="{HtmlEncoder.Default.Encode(confirmUrl)}">clicking here</a>.
-                """;
+        Hi{(string.IsNullOrWhiteSpace(name) ? "" : " " + HtmlEncoder.Default.Encode(name))},
+        <br/>Please confirm your account by
+        <a href="{HtmlEncoder.Default.Encode(confirmUrl)}">clicking here</a>.
+    """;
 
-    try
-    {
-        await emailSender.SendEmailAsync(email, subject, body);
-    }
-    catch (Exception ex)
-    {
-        log.LogWarning(ex, "Email send failed. Confirmation URL: {Url}", confirmUrl);
-    }
+    try { await emailSender.SendEmailAsync(email, subject, body); }
+    catch (Exception ex) { log.LogWarning(ex, "Email send failed. Confirmation URL: {Url}", confirmUrl); }
 
     return Results.Redirect("/account/login?confirm=1");
 }).DisableAntiforgery();
 
-// CONFERMA EMAIL (UNICO ENDPOINT) — GET /account/confirm-email
-app.MapGet("/account/confirm-email", async (
+// CONFIRM EMAIL (GET /account/confirm-email)
+app.MapGet(ConfirmPath, async (
     string userId,
     string code,
     UserManager<IdentityUser> users) =>
@@ -182,11 +185,12 @@ app.MapGet("/account/confirm-email", async (
     return Results.Redirect($"/account/login?e={Uri.EscapeDataString(msg)}");
 });
 
-// RESEND CONFIRMATION
+// RESEND CONFIRMATION (uses the SAME ConfirmPath)
 app.MapPost("/account/resend-confirmation", async (
     HttpContext ctx,
     UserManager<IdentityUser> users,
-    IEmailSender emailSender) =>
+    IEmailSender emailSender,
+    IConfiguration config) =>
 {
     var form = await ctx.Request.ReadFormAsync();
     var email = form["email"].ToString();
@@ -198,8 +202,8 @@ app.MapPost("/account/resend-confirmation", async (
     var token = await users.GenerateEmailConfirmationTokenAsync(user);
     var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
 
-    var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
-    var confirmUrl = $"{baseUrl}/account/confirm-email?userId={Uri.EscapeDataString(user.Id)}&code={code}";
+    var baseUrl = BuildBaseUrl(config, ctx);
+    var confirmUrl = $"{baseUrl}{ConfirmPath}?userId={Uri.EscapeDataString(user.Id)}&code={code}";
 
     await emailSender.SendEmailAsync(email, "Confirm your email",
         $"Click <a href='{HtmlEncoder.Default.Encode(confirmUrl)}'>here</a> to confirm.");
@@ -214,7 +218,7 @@ app.MapPost("/app-logout", async (SignInManager<IdentityUser> signIn) =>
     return Results.Redirect("/");
 }).DisableAntiforgery();
 
-// DIAGNOSTICA: test SMTP
+// Optional SMTP diag
 app.MapGet("/diag/smtp", async (IEmailSender mail, HttpContext ctx) =>
 {
     var to = ctx.Request.Query["to"].ToString();
@@ -225,8 +229,17 @@ app.MapGet("/diag/smtp", async (IEmailSender mail, HttpContext ctx) =>
     return Results.Ok("Sent.");
 });
 
+// Helper to build a public base URL (use appsettings: "PublicBaseUrl" for LAN/WAN)
+static string BuildBaseUrl(IConfiguration config, HttpContext ctx)
+{
+    var pb = config["PublicBaseUrl"];
+    return !string.IsNullOrWhiteSpace(pb)
+        ? pb!.TrimEnd('/')
+        : $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+}
 
-// ---------------------- SEED (DB + roles + admin) ----------------------
+// ---------------------------------------------------------------------
+// Seed DB (roles, admin, sample events)
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
