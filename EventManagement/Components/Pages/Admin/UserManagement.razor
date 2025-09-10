@@ -1,0 +1,134 @@
+﻿@page "/admin/users"
+@attribute [Authorize(Policy = "users.manage")]
+@inject HttpClient Http
+
+<h3>User Management</h3>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (users is null)
+{
+    <div class="alert alert-info">Loading…</div>
+}
+else if (users.Count == 0)
+{
+    <div class="alert alert-info">No users found.</div>
+}
+else
+{
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Confirmed</th>
+                <th>Roles</th>
+                <th style="width:300px">Add role</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var u in users)
+            {
+                <tr>
+                    <td>@u.Email</td>
+                    <td>@(u.EmailConfirmed ? "Yes" : "No")</td>
+                    <td>
+                        @if (u.Roles?.Any() == true)
+                        {
+                            @foreach (var r in u.Roles)
+                            {
+                                <span class="badge bg-secondary me-1">@r</span>
+                                <button class="btn btn-sm btn-outline-danger me-2"
+                                        disabled="@(busy)"
+                                        @onclick="() => RemoveRole(u, r)">
+                                    Remove
+                                </button>
+                            }
+                        }
+                        else
+                        {
+                            <span class="text-muted">none</span>
+                        }
+                    </td>
+                    <td>
+                        <div class="d-flex">
+                            <select class="form-select form-select-sm me-2"
+                                    style="max-width:180px"
+                                    @bind="_selected[u.Id]">
+                                <option value="">-- choose role --</option>
+                                @foreach (var r in roles)
+                                {
+                                    <option value="@r">@r</option>
+                                }
+                            </select>
+                            <button class="btn btn-sm btn-primary"
+                                    disabled="@(busy || string.IsNullOrWhiteSpace(_selected.GetValueOrDefault(u.Id)))"
+                                    @onclick="() => AddRole(u)">
+                                Add
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code
+{
+    record UserVm(string Id, string Email, bool EmailConfirmed, string[] Roles);
+
+    List<UserVm>? users;
+    string[] roles = Array.Empty<string>();
+    string? error;
+    bool busy;
+    Dictionary<string, string> _selected = new(); // userId -> role scelto
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            users = await Http.GetFromJsonAsync<List<UserVm>>("/admin/users");
+            roles = await Http.GetFromJsonAsync<string[]>("/admin/roles") ?? Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            error = "Failed to load users. " + ex.Message;
+        }
+    }
+
+    async Task Reload()
+    {
+        users = await Http.GetFromJsonAsync<List<UserVm>>("/admin/users") ?? new();
+        StateHasChanged();
+    }
+
+    async Task AddRole(UserVm u)
+    {
+        var role = _selected.GetValueOrDefault(u.Id);
+        if (string.IsNullOrWhiteSpace(role)) return;
+        busy = true; StateHasChanged();
+        try
+        {
+            var res = await Http.PostAsync($"/admin/role/assign?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
+            if (!res.IsSuccessStatusCode)
+                error = "Assign failed: " + await res.Content.ReadAsStringAsync();
+            await Reload();
+        }
+        finally { busy = false; StateHasChanged(); }
+    }
+
+    async Task RemoveRole(UserVm u, string role)
+    {
+        busy = true; StateHasChanged();
+        try
+        {
+            var res = await Http.PostAsync($"/admin/role/remove?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
+            if (!res.IsSuccessStatusCode)
+                error = "Remove failed: " + await res.Content.ReadAsStringAsync();
+            await Reload();
+        }
+        finally { busy = false; StateHasChanged(); }
+    }
+}

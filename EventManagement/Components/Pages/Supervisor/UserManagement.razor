@@ -1,0 +1,155 @@
+﻿@page "/supervisor/users"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = EventManagement.Security.Permissions.Names.ManageRoles)]
+
+@using System.Net.Http.Json
+@using EventManagement.Security
+@using Microsoft.AspNetCore.Authorization
+@inject HttpClient Http
+
+<h3 class="mb-3">User Management</h3>
+
+@if (loading)
+{
+    <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+}
+else if (rows.Count == 0)
+{
+    <div class="alert alert-info mb-0">No users found.</div>
+}
+else
+{
+    <table class="table align-middle">
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Confirmed</th>
+                <th>Roles</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var u in rows)
+            {
+                <tr>
+                    <td>@u.Email</td>
+                    <td>
+                        @if (u.EmailConfirmed)
+                        {
+                            <span class="badge text-bg-success">Yes</span>
+                        }
+                        else
+                        {
+                            <span class="badge text-bg-secondary">No</span>
+                        }
+                    </td>
+                    <td>
+                        @foreach (var r in u.Roles.OrderBy(x => x))
+                        {
+                            <span class="badge text-bg-primary me-1">@r</span>
+                        }
+                    </td>
+                    <td class="text-end">
+                        <!-- Toggle Admin -->
+                        <button class="btn btn-sm @(u.Roles.Contains("Admin") ? "btn-outline-danger" : "btn-outline-primary") me-1"
+                                title="Add/Remove Admin"
+                                @onclick="@(() => ToggleRole(u, "Admin"))">
+                            @(u.Roles.Contains("Admin") ? "Remove Admin" : "Make Admin")
+                        </button>
+
+                        <!-- Toggle User -->
+                        <button class="btn btn-sm @(u.Roles.Contains("User") ? "btn-outline-danger" : "btn-outline-primary") me-1"
+                                title="Add/Remove User"
+                                @onclick="@(() => ToggleRole(u, "User"))">
+                            @(u.Roles.Contains("User") ? "Remove User" : "Make User")
+                        </button>
+
+                        <!-- Toggle Supervisor -->
+                        <button class="btn btn-sm @(u.Roles.Contains("Supervisor") ? "btn-outline-danger" : "btn-outline-warning")"
+                                title="Add/Remove Supervisor"
+                                @onclick="@(() => ToggleRole(u, "Supervisor"))">
+                            @(u.Roles.Contains("Supervisor") ? "Remove Supervisor" : "Make Supervisor")
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert @alertClass mt-3">@message</div>
+}
+
+@code {
+    private bool loading = true;
+    private string? message;
+    private string alertClass = "alert-info";
+
+    private List<UserRow> rows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        message = null;
+        try
+        {
+            var data = await Http.GetFromJsonAsync<List<UserRow>>("/admin/users");
+            rows = data ?? new();
+        }
+        catch (Exception ex)
+        {
+            alertClass = "alert-danger";
+            message = "Failed to load users.";
+            Console.Error.WriteLine(ex);
+        }
+        loading = false;
+    }
+
+    private async Task ToggleRole(UserRow u, string role)
+    {
+        try
+        {
+            var url = u.Roles.Contains(role)
+                ? $"/admin/roles/remove?email={Uri.EscapeDataString(u.Email)}&role={Uri.EscapeDataString(role)}"
+                : $"/admin/roles/add?email={Uri.EscapeDataString(u.Email)}&role={Uri.EscapeDataString(role)}";
+
+            var res = await Http.PostAsync(url, content: null);
+            if (res.IsSuccessStatusCode)
+            {
+                if (u.Roles.Contains(role)) u.Roles.Remove(role);
+                else u.Roles.Add(role);
+
+                alertClass = "alert-success";
+                message = "Role updated.";
+            }
+            else
+            {
+                var txt = await res.Content.ReadAsStringAsync();
+                alertClass = "alert-danger";
+                message = $"Operation failed: {txt}";
+            }
+        }
+        catch (Exception ex)
+        {
+            alertClass = "alert-danger";
+            message = "Unexpected error.";
+            Console.Error.WriteLine(ex);
+        }
+        StateHasChanged();
+    }
+
+    private class UserRow
+    {
+        public string Id { get; set; } = "";
+        public string Email { get; set; } = "";
+        public bool EmailConfirmed { get; set; }
+        public List<string> Roles { get; set; } = new();
+    }
+}

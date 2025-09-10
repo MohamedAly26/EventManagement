@@ -1,7 +1,6 @@
 ﻿@page "/admin/events"
 @rendermode InteractiveServer
-@attribute [Authorize(Roles = "Admin")]
-
+@attribute [Authorize(Policy = "events.manage")]
 @using EventManagement.Models
 @using EventManagement.Services
 @using Microsoft.AspNetCore.Authorization

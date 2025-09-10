@@ -1,6 +1,6 @@
 ﻿@page "/admin/events/{Id:int}/subscribers"
 @rendermode InteractiveServer
-@attribute [Authorize(Roles = "Admin")]
+@attribute [Authorize(Policy = "subscribers.view")]
 @using Microsoft.AspNetCore.Authorization
 @using EventManagement.Services
 @using EventManagement.Models
