@@ -1,6 +1,5 @@
 ﻿@page "/admin/users"
 @attribute [Authorize(Policy = "users.manage")]
-@inject HttpClient Http
 
 <h3>User Management</h3>
 
@@ -75,22 +74,21 @@ else
     </table>
 }
 
-@code
-{
+@code {
     record UserVm(string Id, string Email, bool EmailConfirmed, string[] Roles);
 
     List<UserVm>? users;
     string[] roles = Array.Empty<string>();
     string? error;
     bool busy;
-    Dictionary<string, string> _selected = new(); // userId -> role scelto
+    Dictionary<string, string> _selected = new(); // userId -> ruolo scelto
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            users = await Http.GetFromJsonAsync<List<UserVm>>("/admin/users");
-            roles = await Http.GetFromJsonAsync<string[]>("/admin/roles") ?? Array.Empty<string>();
+            users = await Http.GetFromJsonAsync<List<UserVm>>("/api/admin/users");
+            roles = await Http.GetFromJsonAsync<string[]>("/api/admin/roles") ?? Array.Empty<string>();
         }
         catch (Exception ex)
         {
@@ -100,7 +98,7 @@ else
 
     async Task Reload()
     {
-        users = await Http.GetFromJsonAsync<List<UserVm>>("/admin/users") ?? new();
+        users = await Http.GetFromJsonAsync<List<UserVm>>("/api/admin/users") ?? new();
         StateHasChanged();
     }
 
@@ -111,7 +109,7 @@ else
         busy = true; StateHasChanged();
         try
         {
-            var res = await Http.PostAsync($"/admin/role/assign?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
+            var res = await Http.PostAsync($"/api/admin/role/assign?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
             if (!res.IsSuccessStatusCode)
                 error = "Assign failed: " + await res.Content.ReadAsStringAsync();
             await Reload();
@@ -124,7 +122,7 @@ else
         busy = true; StateHasChanged();
         try
         {
-            var res = await Http.PostAsync($"/admin/role/remove?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
+            var res = await Http.PostAsync($"/api/admin/role/remove?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
             if (!res.IsSuccessStatusCode)
                 error = "Remove failed: " + await res.Content.ReadAsStringAsync();
             await Reload();

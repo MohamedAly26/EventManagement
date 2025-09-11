@@ -2,7 +2,6 @@
 @using EventManagement.Security
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = EventManagement.Security.Permissions.Names.ManageRoles)]
-@inject HttpClient Http
 @inject NavigationManager Nav
 
 <h3 class="mb-3">Role permissions</h3>
@@ -49,7 +48,6 @@ else
 }
 
 @code {
-    // role -> perm[] (ritorna da /admin/permissions)
     private Dictionary<string, string[]> matrix = new(StringComparer.OrdinalIgnoreCase);
     private List<string> roles = new();
     private List<string> allPerms = new();
@@ -61,13 +59,10 @@ else
         try
         {
             loading = true;
-            // GET /admin/permissions  => { "Admin": ["events.manage", ...], "Supervisor": [...] }
-            matrix = await Http.GetFromJsonAsync<Dictionary<string, string[]>>("/admin/permissions")
+            matrix = await Http.GetFromJsonAsync<Dictionary<string, string[]>>("/api/admin/permissions")
                      ?? new(StringComparer.OrdinalIgnoreCase);
 
             roles = matrix.Keys.OrderBy(r => r).ToList();
-
-            // tutti i permessi usati (se hai dato tutto al Supervisor vedrai l'elenco completo)
             allPerms = matrix.Values.SelectMany(v => v).Distinct(StringComparer.OrdinalIgnoreCase)
                                    .OrderBy(p => p).ToList();
         }
@@ -86,8 +81,8 @@ else
         try
         {
             var url = nowChecked
-                ? $"/admin/permissions/grant?role={Uri.EscapeDataString(role)}&perm={Uri.EscapeDataString(perm)}"
-                : $"/admin/permissions/revoke?role={Uri.EscapeDataString(role)}&perm={Uri.EscapeDataString(perm)}";
+                ? $"/api/admin/permissions/grant?role={Uri.EscapeDataString(role)}&perm={Uri.EscapeDataString(perm)}"
+                : $"/api/admin/permissions/revoke?role={Uri.EscapeDataString(role)}&perm={Uri.EscapeDataString(perm)}";
 
             var resp = await Http.PostAsync(url, content: null);
             if (!resp.IsSuccessStatusCode)
@@ -96,7 +91,6 @@ else
                 return;
             }
 
-            // aggiorna la matrice client-side
             var current = matrix.TryGetValue(role, out var arr) ? arr.ToList() : new List<string>();
             if (nowChecked)
             {
