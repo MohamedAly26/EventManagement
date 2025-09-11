@@ -2,6 +2,7 @@
 using EventManagement.Data;
 using EventManagement.Models;
 using EventManagement.Services;
+using EventManagement.Security;
 
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -10,45 +11,47 @@ using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 
+using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
-using System.Security.Claims;
-using EventManagement.Security;
+
+// =====================================================================
+// Program
+// =====================================================================
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ---------------- DataProtection / token lifetime ----------------
+// --------------------------- DataProtection ---------------------------
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(
         Path.Combine(builder.Environment.ContentRootPath, "keys")))
     .SetApplicationName("EventManagement");
 
+// token conferma email più lunghi
 builder.Services.Configure<DataProtectionTokenProviderOptions>(o =>
 {
     o.TokenLifespan = TimeSpan.FromDays(3);
 });
 
-// ---------------- Core services ----------------
+// ------------------------------- Services -----------------------------
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddHttpClient();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<EventService>();
-// HttpClient per Blazor Server: imposta la BaseAddress all'origin dell'app
-// HttpClient per Blazor Server: usa l'origin corrente come BaseAddress
+
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents(o => o.DetailedErrors = true);
+
+// HttpClient per Blazor Server: BaseAddress = origin del sito
 builder.Services.AddScoped(sp =>
 {
     var nav = sp.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
     return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
 });
 
-
-builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents(o => o.DetailedErrors = true);
-
-// ---------------- Auth / Identity ----------------
+// --------------------------- Auth + Identity --------------------------
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = IdentityConstants.ApplicationScheme;
@@ -57,20 +60,19 @@ builder.Services.AddAuthentication(options =>
 })
 .AddIdentityCookies();
 
-// permission policies (claim-based)
 builder.Services.AddAuthorization(options =>
 {
+    // Una policy per ogni permesso
     foreach (var perm in Permissions.All)
         options.AddPolicy(perm, p => p.RequireClaim(Permissions.ClaimType, perm));
 });
-
 builder.Services.AddCascadingAuthenticationState();
 
-// SMTP + IEmailSender
+// SMTP + email sender
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
 builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
-// Identity (con token conferma email)
+// Identity
 builder.Services
     .AddIdentityCore<IdentityUser>(options =>
     {
@@ -78,6 +80,7 @@ builder.Services
         options.SignIn.RequireConfirmedEmail = true;
         options.User.RequireUniqueEmail = true;
 
+        // password dev-friendly
         options.Password.RequireNonAlphanumeric = false;
         options.Password.RequireUppercase = false;
         options.Password.RequireLowercase = false;
@@ -90,9 +93,10 @@ builder.Services
     .AddApiEndpoints()
     .AddDefaultTokenProviders();
 
+// =====================================================================
 var app = builder.Build();
 
-// ---------------- Pipeline ----------------
+// ------------------------------- Pipeline -----------------------------
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
@@ -102,15 +106,15 @@ app.UseAuthorization();
 app.MapRazorComponents<App>()
    .AddInteractiveServerRenderMode();
 
-// Minimal Identity endpoints
+// Endpoints Identity minimi
 app.MapIdentityApi<IdentityUser>();
 
-// =================================================================
-// Admin API: utenti e permessi
-// =================================================================
+// =====================================================================
+// Admin API: utenti / ruoli / permessi  (solo JSON, prefisso /api/admin)
+// =====================================================================
 
-// GET /admin/users  -> elenco utenti con ruoli
-app.MapGet("/admin/users",
+// GET /api/admin/users -> elenco con ruoli
+app.MapGet("/api/admin/users",
     [Authorize(Policy = Permissions.Names.ManageUsers)]
 async (UserManager<IdentityUser> userMgr) =>
     {
@@ -124,8 +128,50 @@ async (UserManager<IdentityUser> userMgr) =>
         return Results.Json(data);
     });
 
-// GET /admin/permissions  -> mappa ruolo -> permessi
-app.MapGet("/admin/permissions",
+// GET /api/admin/roles -> elenco ruoli disponibili
+app.MapGet("/api/admin/roles",
+    [Authorize(Policy = Permissions.Names.ManageUsers)]
+(RoleManager<IdentityRole> roleMgr) =>
+    Results.Json(roleMgr.Roles.Select(r => r.Name).OrderBy(n => n)));
+
+// POST /api/admin/role/assign?userId=..&role=..
+app.MapPost("/api/admin/role/assign",
+    [Authorize(Policy = Permissions.Names.ManageUsers)]
+async (string userId, string role,
+       UserManager<IdentityUser> userMgr, RoleManager<IdentityRole> roleMgr) =>
+    {
+        if (!await roleMgr.RoleExistsAsync(role))
+            return Results.BadRequest("Role not found.");
+
+        var user = await userMgr.FindByIdAsync(userId);
+        if (user is null) return Results.NotFound("User not found.");
+
+        var res = await userMgr.AddToRoleAsync(user, role);
+        return res.Succeeded
+            ? Results.Ok()
+            : Results.BadRequest(string.Join("; ", res.Errors.Select(e => e.Description)));
+    }).DisableAntiforgery();
+
+// POST /api/admin/role/remove?userId=..&role=..
+app.MapPost("/api/admin/role/remove",
+    [Authorize(Policy = Permissions.Names.ManageUsers)]
+async (string userId, string role,
+       UserManager<IdentityUser> userMgr, RoleManager<IdentityRole> roleMgr) =>
+    {
+        if (!await roleMgr.RoleExistsAsync(role))
+            return Results.BadRequest("Role not found.");
+
+        var user = await userMgr.FindByIdAsync(userId);
+        if (user is null) return Results.NotFound("User not found.");
+
+        var res = await userMgr.RemoveFromRoleAsync(user, role);
+        return res.Succeeded
+            ? Results.Ok()
+            : Results.BadRequest(string.Join("; ", res.Errors.Select(e => e.Description)));
+    }).DisableAntiforgery();
+
+// GET /api/admin/permissions -> mappa ruolo -> permessi
+app.MapGet("/api/admin/permissions",
     [Authorize(Policy = Permissions.Names.ManageRoles)]
 async (RoleManager<IdentityRole> roleMgr) =>
     {
@@ -143,95 +189,43 @@ async (RoleManager<IdentityRole> roleMgr) =>
         return Results.Json(result);
     });
 
-// POST /admin/permissions/grant?role=Admin&perm=events.manage
-app.MapPost("/admin/permissions/grant",
+// POST /api/admin/permissions/grant?role=..&perm=..
+app.MapPost("/api/admin/permissions/grant",
     [Authorize(Policy = Permissions.Names.ManageRoles)]
 async (string role, string perm, RoleManager<IdentityRole> roleMgr) =>
     {
         if (!Permissions.All.Contains(perm))
             return Results.BadRequest("Unknown permission.");
+
         var r = await roleMgr.FindByNameAsync(role);
         if (r is null) return Results.NotFound("Role not found.");
+
         var claims = await roleMgr.GetClaimsAsync(r);
         if (!claims.Any(c => c.Type == Permissions.ClaimType && c.Value == perm))
             await roleMgr.AddClaimAsync(r, new Claim(Permissions.ClaimType, perm));
-        return Results.Ok();
-    })
-.DisableAntiforgery();
 
-// POST /admin/permissions/revoke?role=Admin&perm=events.manage
-app.MapPost("/admin/permissions/revoke",
+        return Results.Ok();
+    }).DisableAntiforgery();
+
+// POST /api/admin/permissions/revoke?role=..&perm=..
+app.MapPost("/api/admin/permissions/revoke",
     [Authorize(Policy = Permissions.Names.ManageRoles)]
 async (string role, string perm, RoleManager<IdentityRole> roleMgr) =>
     {
         var r = await roleMgr.FindByNameAsync(role);
         if (r is null) return Results.NotFound("Role not found.");
+
         var claims = await roleMgr.GetClaimsAsync(r);
         var hit = claims.FirstOrDefault(c => c.Type == Permissions.ClaimType && c.Value == perm);
         if (hit is null) return Results.NotFound("Claim not found.");
+
         await roleMgr.RemoveClaimAsync(r, hit);
         return Results.Ok();
-    })
-.DisableAntiforgery();
+    }).DisableAntiforgery();
 
-// ---------------- Role Management (Supervisor only) ----------------
-
-// Aggiungi un ruolo a un utente
-// POST /admin/roles/add?email=user@x.com&role=Admin
-app.MapPost("/admin/roles/add",
-    [Authorize(Policy = Permissions.Names.ManageRoles)]
-async (string email, string role, UserManager<IdentityUser> userMgr, RoleManager<IdentityRole> roleMgr) =>
-    {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(role))
-            return Results.BadRequest("email and role are required.");
-
-        if (!await roleMgr.RoleExistsAsync(role))
-            await roleMgr.CreateAsync(new IdentityRole(role));
-
-        var user = await userMgr.FindByEmailAsync(email);
-        if (user is null) return Results.NotFound("User not found.");
-
-        if (await userMgr.IsInRoleAsync(user, role))
-            return Results.Ok("User already in that role.");
-
-        var res = await userMgr.AddToRoleAsync(user, role);
-        return res.Succeeded ? Results.Ok("Role added.") :
-            Results.BadRequest(string.Join("; ", res.Errors.Select(e => e.Description)));
-    })
-.DisableAntiforgery();
-
-// Rimuovi un ruolo da un utente (con safeguard per l’ultimo Admin)
-// POST /admin/roles/remove?email=user@x.com&role=Admin
-app.MapPost("/admin/roles/remove",
-    [Authorize(Policy = Permissions.Names.ManageRoles)]
-async (string email, string role, UserManager<IdentityUser> userMgr) =>
-    {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(role))
-            return Results.BadRequest("email and role are required.");
-
-        var user = await userMgr.FindByEmailAsync(email);
-        if (user is null) return Results.NotFound("User not found.");
-
-        if (!await userMgr.IsInRoleAsync(user, role))
-            return Results.Ok("User not in that role.");
-
-        // safeguard: non togliere Admin all’ultimo admin rimasto
-        if (role.Equals("Admin", StringComparison.OrdinalIgnoreCase))
-        {
-            var admins = await userMgr.GetUsersInRoleAsync("Admin");
-            if (admins.Count <= 1 && admins.Any(u => u.Id == user.Id))
-                return Results.BadRequest("Cannot remove 'Admin' from the last remaining admin.");
-        }
-
-        var res = await userMgr.RemoveFromRoleAsync(user, role);
-        return res.Succeeded ? Results.Ok("Role removed.") :
-            Results.BadRequest(string.Join("; ", res.Errors.Select(e => e.Description)));
-    })
-.DisableAntiforgery();
-
-// =================================================================
-// Email flows (login/register/confirm/resend)
-// =================================================================
+// =====================================================================
+// Account: login / register / confirm / resend / logout
+// =====================================================================
 
 const string ConfirmPath = "/account/confirm-email";
 
@@ -255,7 +249,7 @@ app.MapPost("/app-login", async (
     return result.Succeeded ? Results.Redirect("/") : Results.Redirect("/account/login?e=invalid");
 }).DisableAntiforgery();
 
-// REGISTER (send confirmation link)
+// REGISTER (invia link conferma)
 app.MapPost("/app-register", async (
     HttpContext ctx,
     UserManager<IdentityUser> users,
@@ -324,7 +318,7 @@ app.MapGet(ConfirmPath, async (
     return Results.Redirect($"/account/login?e={Uri.EscapeDataString(msg)}");
 });
 
-// RESEND CONFIRMATION
+// RESEND CONFIRM EMAIL
 app.MapPost("/account/resend-confirmation", async (
     HttpContext ctx,
     UserManager<IdentityUser> users,
@@ -357,11 +351,27 @@ app.MapPost("/app-logout", async (SignInManager<IdentityUser> signIn) =>
     return Results.Redirect("/");
 }).DisableAntiforgery();
 
-// ---------------- Helpers ----------------
+// (opzionale) Diagnostica SMTP
+app.MapGet("/diag/smtp", async (IEmailSender mail, HttpContext ctx) =>
+{
+    var to = ctx.Request.Query["to"].ToString();
+    if (string.IsNullOrWhiteSpace(to))
+        return Results.BadRequest("Use /diag/smtp?to=address@example.com");
+
+    await mail.SendEmailAsync(to, "SMTP test", "<b>SMTP OK</b>");
+    return Results.Ok("Sent.");
+});
+
+// =====================================================================
+// Helpers
+// =====================================================================
+
 static string BuildBaseUrl(IConfiguration config, HttpContext ctx)
 {
     var pb = config["PublicBaseUrl"];
-    return !string.IsNullOrWhiteSpace(pb) ? pb!.TrimEnd('/') : $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+    return !string.IsNullOrWhiteSpace(pb)
+        ? pb!.TrimEnd('/')
+        : $"{ctx.Request.Scheme}://{ctx.Request.Host}";
 }
 
 static async Task EnsureRole(RoleManager<IdentityRole> rm, string name)
@@ -378,33 +388,33 @@ static async Task Grant(RoleManager<IdentityRole> rm, string roleName, string pe
         await rm.AddClaimAsync(role, new Claim(Permissions.ClaimType, perm));
 }
 
-// =================================================================
-// SEED: ruoli, permessi, admin, SUPERVisor, eventi demo
-// =================================================================
+// =====================================================================
+// Seed DB (migrations, ruoli, permessi, admin, supervisor, eventi)
+// =====================================================================
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
 
     var db = services.GetRequiredService<AppDbContext>();
+    var roleMgr = services.GetRequiredService<RoleManager<IdentityRole>>();
+    var userMgr = services.GetRequiredService<UserManager<IdentityUser>>();
+
     await db.Database.MigrateAsync();
 
-    var roleMgr = services.GetRequiredService<RoleManager<IdentityRole>>();
+    // Ruoli base
     await EnsureRole(roleMgr, "User");
     await EnsureRole(roleMgr, "Admin");
     await EnsureRole(roleMgr, "Supervisor");
 
-    // Admin: NO ManageRoles (così solo il Supervisor gestisce i ruoli)
+    // Admin LIMITATO (niente ManageUsers/ManageRoles)
     await Grant(roleMgr, "Admin", Permissions.Names.ManageEvents);
     await Grant(roleMgr, "Admin", Permissions.Names.ViewSubscribers);
-    await Grant(roleMgr, "Admin", Permissions.Names.ManageUsers);
 
-    // Supervisor ha TUTTI i permessi
+    // Supervisor ha TUTTO
     foreach (var p in Permissions.All)
         await Grant(roleMgr, "Supervisor", p);
 
-    var userMgr = services.GetRequiredService<UserManager<IdentityUser>>();
-
-    // Admin seed (rimane Admin)
+    // Admin seed (solo ruolo Admin)
     var admin = await userMgr.FindByEmailAsync("admin@example.com");
     if (admin is null)
     {
@@ -415,25 +425,31 @@ using (var scope = app.Services.CreateScope())
             EmailConfirmed = true
         };
         await userMgr.CreateAsync(admin, "Admin123!");
-        await userMgr.AddToRoleAsync(admin, "Admin");
     }
+    if (!await userMgr.IsInRoleAsync(admin, "Admin"))
+        await userMgr.AddToRoleAsync(admin, "Admin");
+    if (await userMgr.IsInRoleAsync(admin, "Supervisor"))
+        await userMgr.RemoveFromRoleAsync(admin, "Supervisor");
 
-    // >>> Supervisor: promuovi l'email richiesta
-    var supervisorEmail = "mohamedessamrere@gmail.com";
-    var sup = await userMgr.FindByEmailAsync(supervisorEmail);
+    // Supervisor (la tua mail)
+    const string SupervisorEmail = "mohamedessamrere@gmail.com";
+    var sup = await userMgr.FindByEmailAsync(SupervisorEmail);
     if (sup is null)
     {
-        // lo creo in dev; confermato per facilitare l’accesso
         sup = new IdentityUser
         {
-            UserName = supervisorEmail,
-            Email = supervisorEmail,
+            UserName = SupervisorEmail,
+            Email = SupervisorEmail,
             EmailConfirmed = true
         };
-        await userMgr.CreateAsync(sup, "Supervisor123!"); // password dev
+        // password seed solo DEV
+        await userMgr.CreateAsync(sup, "Supervisor123!");
     }
     if (!await userMgr.IsInRoleAsync(sup, "Supervisor"))
         await userMgr.AddToRoleAsync(sup, "Supervisor");
+    // opzionale: anche Admin per aprire le pagine eventi
+    if (!await userMgr.IsInRoleAsync(sup, "Admin"))
+        await userMgr.AddToRoleAsync(sup, "Admin");
 
     // Eventi demo
     if (!db.Events.Any())
