@@ -61,19 +61,12 @@ else
             loading = true;
             matrix = await Http.GetFromJsonAsync<Dictionary<string, string[]>>("/api/admin/permissions")
                      ?? new(StringComparer.OrdinalIgnoreCase);
-
             roles = matrix.Keys.OrderBy(r => r).ToList();
             allPerms = matrix.Values.SelectMany(v => v).Distinct(StringComparer.OrdinalIgnoreCase)
-                                   .OrderBy(p => p).ToList();
+                                    .OrderBy(p => p).ToList();
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            loading = false;
-        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; }
     }
 
     private async Task Toggle(string role, string perm, bool nowChecked)
@@ -84,12 +77,8 @@ else
                 ? $"/api/admin/permissions/grant?role={Uri.EscapeDataString(role)}&perm={Uri.EscapeDataString(perm)}"
                 : $"/api/admin/permissions/revoke?role={Uri.EscapeDataString(role)}&perm={Uri.EscapeDataString(perm)}";
 
-            var resp = await Http.PostAsync(url, content: null);
-            if (!resp.IsSuccessStatusCode)
-            {
-                error = $"Server returned {(int)resp.StatusCode}";
-                return;
-            }
+            var resp = await Http.PostAsync(url, null);
+            if (!resp.IsSuccessStatusCode) { error = $"Server returned {(int)resp.StatusCode}"; return; }
 
             var current = matrix.TryGetValue(role, out var arr) ? arr.ToList() : new List<string>();
             if (nowChecked)
@@ -102,9 +91,6 @@ else
             }
             matrix[role] = current.OrderBy(p => p).ToArray();
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
+        catch (Exception ex) { error = ex.Message; }
     }
 }
