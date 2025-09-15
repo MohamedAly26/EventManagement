@@ -1,5 +1,13 @@
 ﻿@page "/admin/users"
-@attribute [Authorize(Policy = "users.manage")]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using EventManagement.Security
+
+@attribute [Authorize(Policy = Permissions.Names.ManageUsers)]
+
+@inject UserManager<IdentityUser> UserMgr
+@inject RoleManager<IdentityRole> RoleMgr
 
 <h3>User Management</h3>
 
@@ -7,9 +15,10 @@
 {
     <div class="alert alert-danger">@error</div>
 }
-else if (users is null)
+
+@if (users is null)
 {
-    <div class="alert alert-info">Loading…</div>
+    <div class="alert alert-info">Loading...</div>
 }
 else if (users.Count == 0)
 {
@@ -23,7 +32,7 @@ else
                 <th>Email</th>
                 <th>Confirmed</th>
                 <th>Roles</th>
-                <th style="width:300px">Add role</th>
+                <th style="width:340px">Add role</th>
             </tr>
         </thead>
         <tbody>
@@ -31,38 +40,37 @@ else
             {
                 <tr>
                     <td>@u.Email</td>
-                    <td>@(u.EmailConfirmed ? "Yes" : "No")</td>
+                    <td>@(u.EmailConfirmed ? "✓" : "✗")</td>
                     <td>
-                        @if (u.Roles?.Any() == true)
+                   
+                        @foreach (var r in u.Roles)
                         {
-                            @foreach (var r in u.Roles)
-                            {
-                                <span class="badge bg-secondary me-1">@r</span>
-                                <button class="btn btn-sm btn-outline-danger me-2"
-                                        disabled="@(busy)"
+                            <span class="badge bg-secondary text-white me-1 align-middle">
+                                @r
+                                <button type="button"
+                                        class="btn btn-sm btn-link p-0 ms-1 text-light opacity-75 align-baseline"
+                                        title="Remove @r"
                                         @onclick="() => RemoveRole(u, r)">
-                                    Remove
+                                    &times;
                                 </button>
-                            }
+                            </span>
+                        
                         }
-                        else
-                        {
-                            <span class="text-muted">none</span>
-                        }
+                 
+
                     </td>
                     <td>
-                        <div class="d-flex">
-                            <select class="form-select form-select-sm me-2"
-                                    style="max-width:180px"
-                                    @bind="_selected[u.Id]">
+                        <div class="d-flex gap-2">
+                            <select class="form-select form-select-sm"
+                                    style="max-width:220px"
+                                    @onchange="e => _selected[u.Id] = e.Value?.ToString() ?? string.Empty">
                                 <option value="">-- choose role --</option>
                                 @foreach (var r in roles)
                                 {
                                     <option value="@r">@r</option>
                                 }
                             </select>
-                            <button class="btn btn-sm btn-primary"
-                                    disabled="@(busy || string.IsNullOrWhiteSpace(_selected.GetValueOrDefault(u.Id)))"
+                            <button class="btn btn-sm btn-primary" disabled="@busy"
                                     @onclick="() => AddRole(u)">
                                 Add
                             </button>
@@ -78,41 +86,56 @@ else
     record UserVm(string Id, string Email, bool EmailConfirmed, string[] Roles);
 
     List<UserVm>? users;
-    string[] roles = Array.Empty<string>();
+    List<string> roles = new();
     string? error;
     bool busy;
-    Dictionary<string, string> _selected = new(); // userId -> role scelto
+    readonly Dictionary<string, string> _selected = new(); // userId -> role scelto
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            users = await Http.GetFromJsonAsync<List<UserVm>>("/api/admin/users");
-            roles = await Http.GetFromJsonAsync<string[]>("/api/admin/roles") ?? Array.Empty<string>();
+            await LoadAll();
         }
         catch (Exception ex)
         {
-            error = "Failed to load users. " + ex.Message;
+            error = ex.Message;
         }
     }
 
-    async Task Reload()
+    private async Task LoadAll()
     {
-        users = await Http.GetFromJsonAsync<List<UserVm>>("/api/admin/users") ?? new();
-        StateHasChanged();
+        // utenti
+        var list = await UserMgr.Users.ToListAsync();
+        var acc = new List<UserVm>(list.Count);
+        foreach (var u in list)
+        {
+            var rs = await UserMgr.GetRolesAsync(u);
+            acc.Add(new UserVm(u.Id, u.Email ?? "", u.EmailConfirmed, rs.ToArray()));
+        }
+        users = acc;
+
+        // ruoli disponibili
+        roles = await RoleMgr.Roles
+            .Select(r => r.Name!)
+            .OrderBy(n => n)
+            .ToListAsync();
     }
 
     async Task AddRole(UserVm u)
     {
-        var role = _selected.GetValueOrDefault(u.Id);
-        if (string.IsNullOrWhiteSpace(role)) return;
+        if (!_selected.TryGetValue(u.Id, out var role) || string.IsNullOrWhiteSpace(role))
+            return;
+
         busy = true; StateHasChanged();
         try
         {
-            var res = await Http.PostAsync($"/api/admin/role/assign?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
-            if (!res.IsSuccessStatusCode)
-                error = "Assign failed: " + await res.Content.ReadAsStringAsync();
-            await Reload();
+            var user = await UserMgr.FindByIdAsync(u.Id);
+            if (user is null) { error = "User not found"; return; }
+
+            var res = await UserMgr.AddToRoleAsync(user, role);
+            if (!res.Succeeded) error = string.Join("; ", res.Errors.Select(e => e.Description));
+            await LoadAll();
         }
         finally { busy = false; StateHasChanged(); }
     }
@@ -122,10 +145,12 @@ else
         busy = true; StateHasChanged();
         try
         {
-            var res = await Http.PostAsync($"/api/admin/role/remove?userId={Uri.EscapeDataString(u.Id)}&role={Uri.EscapeDataString(role)}", null);
-            if (!res.IsSuccessStatusCode)
-                error = "Remove failed: " + await res.Content.ReadAsStringAsync();
-            await Reload();
+            var user = await UserMgr.FindByIdAsync(u.Id);
+            if (user is null) { error = "User not found"; return; }
+
+            var res = await UserMgr.RemoveFromRoleAsync(user, role);
+            if (!res.Succeeded) error = string.Join("; ", res.Errors.Select(e => e.Description));
+            await LoadAll();
         }
         finally { busy = false; StateHasChanged(); }
     }
