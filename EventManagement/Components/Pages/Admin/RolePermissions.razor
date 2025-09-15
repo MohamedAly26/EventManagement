@@ -1,0 +1,128 @@
+﻿@page "/admin/rolepermissions"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+
+
+@attribute [Authorize(Policy = Permissions.Names.ManageRoles)]
+
+@inject RoleManager<IdentityRole> RoleMgr
+
+<h3>Role permissions</h3>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (loading)
+{
+    <div class="alert alert-info">Loading...</div>
+}
+else
+{
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>Permission</th>
+                @foreach (var r in roles)
+                {
+                    <th class="text-center">@r</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var p in allPerms)
+            {
+                <tr>
+                    <td>@p</td>
+                    @foreach (var r in roles)
+                    {
+                        var checkedNow = matrix.TryGetValue(r, out var list) &&
+                        list.Contains(p, StringComparer.OrdinalIgnoreCase);
+                        <td class="text-center">
+                            <input type="checkbox"
+                                   checked="@checkedNow"
+                                   @onchange="e => Toggle(r, p, e.Value is bool b && b)" />
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    // role -> perm[] (via RoleManager)
+    private Dictionary<string, string[]> matrix = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> roles = new();
+    private List<string> allPerms = new();
+    private bool loading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            loading = true;
+
+            roles = RoleMgr.Roles.Select(r => r.Name!).OrderBy(n => n).ToList();
+
+            matrix.Clear();
+            var perms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var roleName in roles)
+            {
+                var role = await RoleMgr.FindByNameAsync(roleName);
+                var claims = await RoleMgr.GetClaimsAsync(role!);
+                var list = claims
+                    .Where(c => c.Type == Permissions.ClaimType)
+                    .Select(c => c.Value)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x)
+                    .ToArray();
+
+                matrix[roleName] = list;
+                foreach (var v in list) perms.Add(v);
+            }
+            // nel caso non siano ancora assegnati tutti i permessi, mostra l'elenco completo noto
+            foreach (var p in Permissions.All) perms.Add(p);
+            allPerms = perms.OrderBy(p => p).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task Toggle(string roleName, string perm, bool nowChecked)
+    {
+        try
+        {
+            var role = await RoleMgr.FindByNameAsync(roleName);
+            if (role is null) { error = "Role not found"; return; }
+
+            if (nowChecked)
+            {
+                var claims = await RoleMgr.GetClaimsAsync(role);
+                if (!claims.Any(c => c.Type == Permissions.ClaimType && c.Value == perm))
+                    await RoleMgr.AddClaimAsync(role, new System.Security.Claims.Claim(Permissions.ClaimType, perm));
+            }
+            else
+            {
+                var claims = await RoleMgr.GetClaimsAsync(role);
+                var hit = claims.FirstOrDefault(c => c.Type == Permissions.ClaimType && c.Value == perm);
+                if (hit is not null) await RoleMgr.RemoveClaimAsync(role, hit);
+            }
+
+
+            // refresh locale
+            await OnInitializedAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

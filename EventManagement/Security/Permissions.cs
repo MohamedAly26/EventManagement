@@ -1,27 +1,23 @@
-﻿namespace EventManagement.Security
+﻿namespace EventManagement.Security;
+
+public static class Permissions
 {
-    using System.Collections.Generic;
+    public const string ClaimType = "permission";
 
-    public static class Permissions
+    public static class Names
     {
-        public const string ClaimType = "permission";
-
-        public static class Names
-        {
-            public const string ManageEvents = "events.manage";
-            public const string ViewSubscribers = "subscribers.view";
-            public const string ManageUsers = "users.manage";
-            public const string ManageRoles = "roles.manage";
-            public const string ConfigurePermissions = "permissions.configure"; // può modificare la matrice
-        }
-
-        public static readonly string[] All =
-        {
-            Names.ManageEvents,
-            Names.ViewSubscribers,
-            Names.ManageUsers,
-            Names.ManageRoles,
-            Names.ConfigurePermissions
-        };
+        public const string ManageEvents = "events.manage";
+        public const string PermissionsConfigure = "permissions.configure";
+        public const string ManageRoles = "roles.manage";
+        public const string ViewSubscribers = "subscribers.view";
+        public const string ManageUsers = "users.manage";
     }
+
+    // Se ti serve un elenco
+    public static readonly string[] All =
+    {
+        Names.ManageEvents, Names.PermissionsConfigure, Names.ManageRoles,
+        Names.ViewSubscribers, Names.ManageUsers
+    };
 }
+
