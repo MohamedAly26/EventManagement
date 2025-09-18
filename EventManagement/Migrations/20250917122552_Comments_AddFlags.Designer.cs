@@ -3,6 +3,7 @@ using System;
 using EventManagement.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace EventManagement.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250917122552_Comments_AddFlags")]
+    partial class Comments_AddFlags
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.10");
@@ -25,18 +28,16 @@ namespace EventManagement.Migrations
 
                     b.Property<string>("Body")
                         .IsRequired()
-                        .HasMaxLength(3000)
+                        .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("EventId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("EventId1")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("FromAdmin")
@@ -50,6 +51,7 @@ namespace EventManagement.Migrations
 
                     b.Property<string>("UserDisplayName")
                         .IsRequired()
+                        .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("UserId")
@@ -58,11 +60,9 @@ namespace EventManagement.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("EventId1");
+                    b.HasIndex("EventId");
 
                     b.HasIndex("ParentId");
-
-                    b.HasIndex("EventId", "ParentId", "CreatedAt");
 
                     b.ToTable("Comments");
                 });
@@ -99,7 +99,6 @@ namespace EventManagement.Migrations
 
                     b.ToTable("Events");
                 });
-
 
             modelBuilder.Entity("EventManagement.Models.Subscription", b =>
                 {
@@ -323,20 +322,20 @@ namespace EventManagement.Migrations
 
             modelBuilder.Entity("EventManagement.Models.Comment", b =>
                 {
-                    b.HasOne("EventManagement.Models.Event", null)
-                        .WithMany()
+                    b.HasOne("EventManagement.Models.Event", "Event")
+                        .WithMany("Comments")
                         .HasForeignKey("EventId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("EventManagement.Models.Event", null)
-                        .WithMany("Comments")
-                        .HasForeignKey("EventId1");
-
-                    b.HasOne("EventManagement.Models.Comment", null)
-                        .WithMany()
+                    b.HasOne("EventManagement.Models.Comment", "Parent")
+                        .WithMany("Replies")
                         .HasForeignKey("ParentId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Event");
+
+                    b.Navigation("Parent");
                 });
 
             modelBuilder.Entity("EventManagement.Models.Subscription", b =>
@@ -407,6 +406,11 @@ namespace EventManagement.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("EventManagement.Models.Comment", b =>
+                {
+                    b.Navigation("Replies");
                 });
 
             modelBuilder.Entity("EventManagement.Models.Event", b =>

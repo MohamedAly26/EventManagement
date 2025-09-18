@@ -1,0 +1,146 @@
+﻿@page "/admin/events/{EventId:int}/comments"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@attribute [Authorize(Policy = EventManagement.Security.Permissions.Names.ManageEvents)]
+@inject EventManagement.Data.AppDbContext Db
+@inject Microsoft.AspNetCore.Identity.UserManager<Microsoft.AspNetCore.Identity.IdentityUser> Users
+
+<h3>Comments – Event @EventTitle</h3>
+
+@if (loading)
+{
+    <p>Loading…</p>
+}
+else
+{
+    if (roots.Count == 0)
+    {
+        <div class="alert alert-info">No comments yet.</div>
+    }
+    else
+    {
+        <div class="list-group">
+            @foreach (var c in roots)
+            {
+                <AdminCommentItem Comment="c"
+                                  Depth="0"
+                                  OnReply="PostReply"
+                                  OnHide="ToggleHide"
+                                  OnDelete="DeleteComment" />
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int EventId { get; set; }
+
+    string EventTitle = "";
+    bool loading = true;
+
+    // Tutti i commenti e le radici (ParentId == null)
+    List<Comment> all = new();
+    List<Comment> roots = new();
+
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Se vuoi reagire anche a cambi pagina con lo stesso componente:
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    /// <summary>
+    /// Carica commenti ed evento e ricostruisce l'albero senza duplicazioni.
+    /// </summary>
+    private async Task LoadAsync()
+    {
+        loading = true;
+
+        var evnt = await Db.Events
+                           .AsNoTracking()
+                           .FirstOrDefaultAsync(e => e.Id == EventId);
+        EventTitle = evnt?.Title ?? $"#{EventId}";
+
+        all = await Db.Comments
+                      .Where(c => c.EventId == EventId)
+                      .OrderBy(c => c.CreatedAt)
+                      .AsNoTracking()
+                      .ToListAsync();
+
+        BuildTree();
+        loading = false;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Ricostruisce l'albero (roots + replies) azzerando sempre le Replies.
+    /// </summary>
+    private void BuildTree()
+    {
+        // 1) azzera Replies per evitare duplicazioni
+        foreach (var c in all)
+            c.Replies = new();
+
+        // 2) ricostruzione
+        var map = all.ToDictionary(c => c.Id);
+        roots = new List<Comment>();
+
+        foreach (var c in all)
+        {
+            if (c.ParentId is null)
+            {
+                roots.Add(c);
+            }
+            else if (map.TryGetValue(c.ParentId.Value, out var parent))
+            {
+                parent.Replies.Add(c);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Callback del componente figlio. Firma con tupla (parentId, body).
+    /// </summary>
+    private async Task PostReply((int parentId, string body) data)
+    {
+        var auth = await AuthenticationStateTask;
+        var me = await Users.GetUserAsync(auth.User);
+        if (me is null) return;
+
+        var text = (data.body ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        Db.Comments.Add(new Comment
+        {
+            EventId = EventId,
+            ParentId = data.parentId,
+            Body = text,
+            UserId = me.Id,
+            UserDisplayName = me.Email ?? me.UserName ?? "Admin",
+            FromAdmin = true
+        });
+
+        await Db.SaveChangesAsync();
+        await LoadAsync(); // ricarica "pulito"
+    }
+
+    private async Task ToggleHide(int id)
+    {
+        var c = await Db.Comments.FindAsync(id);
+        if (c is null) return;
+
+        c.IsHidden = !c.IsHidden;
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task DeleteComment(int id)
+    {
+        var c = await Db.Comments.FindAsync(id);
+        if (c is null) return;
+
+        Db.Comments.Remove(c);
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

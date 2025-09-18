@@ -1,13 +1,11 @@
 ﻿@page "/eventdetails/{Id:int}"
 @rendermode InteractiveServer
-
 @using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
 @using EventManagement.Models
-@using EventManagement.Services
-@using Microsoft.AspNetCore.Components.Authorization
-@inject EventService EventService
+@inject EventManagement.Services.EventService EventService
+@inject EventManagement.Data.AppDbContext Db
 @inject AuthenticationStateProvider AuthProvider
-@inject NavigationManager Nav
 
 <h3 class="mb-3">Event Details</h3>
 
@@ -58,18 +56,12 @@ else
                 class="btn @(isSubscribed ? "btn-outline-danger" : "btn-success")"
                 disabled="@(!CanInteract)"
                 @onclick="ToggleSubscription">
-            @(
-                        isSubscribed
+            @(isSubscribed
                         ? "Unsubscribe"
-                        : (isClosed ? "Event Closed" : (isFull ? "Event Full" : "Subscribe"))
-                        )
+                        : (isClosed ? "Event Closed" : (isFull ? "Event Full" : "Subscribe")))
         </button>
 
-            <a class="btn btn-sm btn-outline-secondary rounded-pill ms-2 d-inline-flex align-items-center px-3"
-               href="/">
-                <span class="oi oi-arrow-left me-2" aria-hidden="true"></span>
-                Back
-            </a>
+            <a class="btn btn-sm btn-outline-secondary rounded-pill ms-2 px-3" href="/">Back</a>
         </div>
 
     @if (!string.IsNullOrEmpty(message))
@@ -77,27 +69,72 @@ else
             <div class="alert @alertClass mt-3 mb-0">@message</div>
         }
     </div>
+
+    <h4 class="mt-4">Comments</h4>
+
+    @if (thread is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        @if (roots.Count == 0)
+        {
+            <div class="alert alert-info">Be the first to comment.</div>
+        }
+        else
+        {
+            @foreach (var c in roots)
+            {
+                <UserCommentItem Comment="c"
+                                 Depth="0"
+                                 OnReply="PostReply" />
+            }
+        }
+
+        <AuthorizeView>
+            <Authorized>
+                <div class="card mt-3">
+                    <div class="card-body">
+                        <textarea class="form-control" rows="3"
+                                  placeholder="Write a comment…"
+                                  @bind="newText"></textarea>
+                        <button class="btn btn-primary mt-2"
+                                disabled="@string.IsNullOrWhiteSpace(newText)"
+                                @onclick="PostNew">
+                            Post comment
+                        </button>
+                    </div>
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <div class="alert alert-warning mt-2">Please log in to comment.</div>
+            </NotAuthorized>
+        </AuthorizeView>
+    }
 }
 
 @code {
     [Parameter] public int Id { get; set; }
 
+    // ---- comments ----
+    private List<Comment>? thread;          // flat list from DB
+    private List<Comment> roots = new();    // only top-level comments
+    private string newText = "";
+
+    // ---- event + subscription ----
     private Event? ev;
     private bool loading = true;
-
-    private string? message;
-    private string alertClass = "alert-info";
 
     private string? currentUserId;
     private bool isAdmin;
     private bool isSubscribed;
+    private string? message;
+    private string alertClass = "alert-info";
 
     private bool isFull => (ev?.Subscriptions?.Count ?? 0) >= (ev?.MaxParticipants ?? 0);
     private bool isClosed => ev is not null && ev.StartDateTime <= DateTime.Now;
 
-    // User can click if:
-    // - NOT admin, and logged in, and
-    // - either already subscribed (to allow Unsubscribe), or event is open for new subscriptions
     private bool CanInteract =>
         !isAdmin &&
         !string.IsNullOrEmpty(currentUserId) &&
@@ -105,31 +142,99 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        // Load event first
+        // Event
         ev = await EventService.GetByIdAsync(Id);
 
-        // Robust auth resolution
+        // Auth
         var authState = await AuthProvider.GetAuthenticationStateAsync();
         var user = authState.User;
-
         if (user.Identity?.IsAuthenticated == true)
         {
             isAdmin = user.IsInRole("Admin");
             currentUserId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             if (!string.IsNullOrEmpty(currentUserId) && ev is not null)
-            {
                 isSubscribed = await EventService.IsSubscribedAsync(Id, currentUserId);
-            }
         }
 
+        // Comments
+        await LoadComments();
         loading = false;
+    }
 
-        if (ev is null)
+    private async Task LoadComments()
+    {
+        thread = await Db.Comments
+                         .Where(c => c.EventId == Id && !c.IsHidden)
+                         .OrderBy(c => c.CreatedAt)
+                         .ToListAsync();
+
+        // build tree
+        foreach (var c in thread) c.Replies = new List<Comment>();
+
+        var byId = thread.ToDictionary(c => c.Id);
+        foreach (var c in thread.Where(x => x.ParentId.HasValue))
+            if (byId.TryGetValue(c.ParentId!.Value, out var parent))
+                parent.Replies.Add(c);
+
+        foreach (var c in thread)
+            c.Replies = c.Replies.OrderBy(x => x.CreatedAt).ToList();
+
+        roots = thread.Where(c => c.ParentId == null)
+                      .OrderBy(c => c.CreatedAt)
+                      .ToList();
+    }
+
+    private async Task PostNew()
+    {
+        var auth = await AuthProvider.GetAuthenticationStateAsync();
+        var u = auth.User;
+        if (!(u.Identity?.IsAuthenticated ?? false)) return;
+
+        var userId = u.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
+        var disp = u.Identity?.Name ?? u.FindFirst(ClaimTypes.Email)?.Value ?? "User";
+
+        Db.Comments.Add(new Comment
         {
-            alertClass = "alert-warning";
-            message = "Event not found or it may have been deleted.";
-        }
+            EventId = Id,
+            Body = newText.Trim(),
+            UserId = userId,
+            UserDisplayName = disp,
+            FromAdmin = false
+        });
+        await Db.SaveChangesAsync();
+
+        newText = "";
+        await LoadComments();
+        StateHasChanged();
+    }
+
+    // firma compatibile con EventCallback<(int parentId, string body)>
+    private async Task PostReply((int parentId, string body) data)
+    {
+        var auth = await AuthProvider.GetAuthenticationStateAsync();
+        var u = auth.User;
+        if (!(u.Identity?.IsAuthenticated ?? false)) return;
+
+        var userId = u.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
+        var disp = u.Identity?.Name ?? u.FindFirst(ClaimTypes.Email)?.Value ?? "User";
+
+        var parent = await Db.Comments.FindAsync(data.parentId);
+        if (parent is null) return;
+
+        Db.Comments.Add(new Comment
+        {
+            EventId = Id,
+            ParentId = data.parentId,
+            Body = data.body.Trim(),
+            UserId = userId,
+            UserDisplayName = disp,
+            FromAdmin = false
+        });
+        await Db.SaveChangesAsync();
+
+        await LoadComments();
+        StateHasChanged();
     }
 
     private async Task ToggleSubscription()
@@ -137,61 +242,34 @@ else
         if (ev is null) return;
 
         if (isAdmin)
-        {
-            alertClass = "alert-info";
-            message = "Admins cannot subscribe to events.";
-            return;
-        }
+        { alertClass = "alert-info"; message = "Admins cannot subscribe to events."; return; }
 
         if (string.IsNullOrEmpty(currentUserId))
+        { alertClass = "alert-warning"; message = "Please log in to subscribe."; return; }
+
+        if (!isSubscribed)
         {
-            alertClass = "alert-warning";
-            message = "Please log in to subscribe.";
-            return;
+            var r = await EventService.SubscribeAsync(Id, currentUserId);
+            switch (r)
+            {
+                case SubscribeResult.Success:
+                    alertClass = "alert-success"; message = "Successfully subscribed."; isSubscribed = true; break;
+                case SubscribeResult.AlreadySubscribed:
+                    alertClass = "alert-info"; message = "You are already subscribed."; isSubscribed = true; break;
+                case SubscribeResult.EventFull:
+                    alertClass = "alert-danger"; message = "Sorry, the event is full."; break;
+                default:
+                    alertClass = "alert-danger"; message = "Event not found."; break;
+            }
+        }
+        else
+        {
+            var ok = await EventService.UnsubscribeAsync(Id, currentUserId);
+            if (ok) { alertClass = "alert-info"; message = "Unsubscribed."; isSubscribed = false; }
+            else { alertClass = "alert-danger"; message = "Unsubscribe failed."; }
         }
 
-        try
-        {
-            if (!isSubscribed)
-            {
-                var result = await EventService.SubscribeAsync(Id, currentUserId);
-                switch (result)
-                {
-                    case SubscribeResult.Success:
-                        alertClass = "alert-success"; message = "Successfully subscribed."; isSubscribed = true; break;
-                    case SubscribeResult.AlreadySubscribed:
-                        alertClass = "alert-info"; message = "You are already subscribed."; isSubscribed = true; break;
-                    case SubscribeResult.EventFull:
-                        alertClass = "alert-danger"; message = "Sorry, the event is full."; break;
-                    case SubscribeResult.UserNotFound:
-                        alertClass = "alert-danger"; message = "User not found."; break;
-                    case SubscribeResult.EventNotFound:
-                    default:
-                        alertClass = "alert-danger"; message = "Event not found."; break;
-                }
-            }
-            else
-            {
-                var ok = await EventService.UnsubscribeAsync(Id, currentUserId);
-                if (ok)
-                {
-                    alertClass = "alert-info"; message = "Unsubscribed."; isSubscribed = false;
-                }
-                else
-                {
-                    alertClass = "alert-danger"; message = "Unsubscribe failed.";
-                }
-            }
-
-            // Refresh event to update counters and flags
-            ev = await EventService.GetByIdAsync(Id);
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            alertClass = "alert-danger";
-            message = "An unexpected error occurred.";
-            Console.Error.WriteLine(ex);
-        }
+        ev = await EventService.GetByIdAsync(Id);
+        StateHasChanged();
     }
 }
