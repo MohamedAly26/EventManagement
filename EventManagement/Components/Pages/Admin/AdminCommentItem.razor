@@ -1,0 +1,75 @@
+﻿@using EventManagement.Models
+
+<div class="mb-2" style="@($"margin-left:{Depth * 16}px")">
+    <div class="small text-muted">
+        <b>@Comment.UserDisplayName</b>
+        @if (Comment.FromAdmin)
+        {
+            <span class="badge bg-secondary ms-1">staff</span>
+        }
+        · @Comment.CreatedAt.ToLocalTime().ToString("g")
+    </div>
+
+    <div>@Comment.Body</div>
+
+    <div class="mt-1">
+        <button class="btn btn-sm btn-outline-secondary me-2"
+                @onclick="() => OnHide.InvokeAsync(Comment.Id)">
+            @(Comment.IsHidden ? "Unhide" : "Hide")
+        </button>
+
+        <button class="btn btn-sm btn-outline-danger me-2"
+                @onclick="() => OnDelete.InvokeAsync(Comment.Id)">
+            Delete
+        </button>
+
+        <button class="btn btn-sm btn-link"
+                @onclick="() => replyOpen = !replyOpen">
+            Reply
+        </button>
+    </div>
+
+    @if (replyOpen)
+    {
+        <div class="mt-2">
+            <textarea class="form-control" rows="2" @bind="replyText"></textarea>
+            <button class="btn btn-sm btn-primary mt-1" @onclick="SendReply">Send</button>
+        </div>
+    }
+
+    @if (Comment.Replies?.Count > 0)
+    {
+        <div class="ms-3 mt-2">
+            @foreach (var r in Comment.Replies.OrderBy(x => x.CreatedAt))
+            {
+                <AdminCommentItem Comment="r"
+                                  Depth="@(Depth + 1)"
+                                  OnReply="OnReply"
+                                  OnHide="OnHide"
+                                  OnDelete="OnDelete" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public required Comment Comment { get; set; }
+    [Parameter] public int Depth { get; set; }
+    [Parameter] public EventCallback<(int parentId, string body)> OnReply { get; set; }
+    [Parameter] public EventCallback<int> OnHide { get; set; }
+    [Parameter] public EventCallback<int> OnDelete { get; set; }
+
+
+    bool replyOpen;
+    string replyText = "";
+
+    async Task SendReply()
+    {
+        var body = replyText?.Trim();
+        if (!string.IsNullOrEmpty(body) && OnReply.HasDelegate)
+            await OnReply.InvokeAsync((Comment.Id, body));
+
+        replyText = "";
+        replyOpen = false;
+    }
+}

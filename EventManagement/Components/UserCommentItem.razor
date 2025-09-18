@@ -1,0 +1,65 @@
+﻿@using EventManagement.Models
+
+<div class="mb-2" style="margin-left:@(Depth * 16)px">
+    <div class="small text-muted">
+        <b>@Comment.UserDisplayName</b>
+        @if (Comment.FromAdmin)
+        {
+            <span class="badge bg-secondary ms-1">staff</span>
+        }
+        · @Comment.CreatedAt.ToLocalTime().ToString("g")
+    </div>
+
+    <div>@Comment.Body</div>
+
+    <div class="mt-1">
+        <button type="button"
+                class="btn btn-sm btn-link"
+                @onclick="() => replyOpen = !replyOpen">
+            Reply
+        </button>
+    </div>
+
+    @if (replyOpen)
+    {
+        <div class="mt-2">
+            <textarea class="form-control" rows="2" @bind="replyText"></textarea>
+            <button class="btn btn-sm btn-primary mt-1"
+                    disabled="@string.IsNullOrWhiteSpace(replyText)"
+                    @onclick="SendReply">
+                Send
+            </button>
+        </div>
+    }
+
+    @if (Comment.Replies?.Count > 0)
+    {
+        @foreach (var r in Comment.Replies)
+        {
+            <UserCommentItem Comment="r"
+                             Depth="@(Depth + 1)"
+                             OnReply="OnReply" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public required Comment Comment { get; set; }
+    [Parameter] public int Depth { get; set; } = 0;
+
+    // NB: firma coerente con EventDetails: EventCallback<(int parentId, string body)>
+    [Parameter] public EventCallback<(int parentId, string body)> OnReply { get; set; }
+
+    bool replyOpen;
+    string replyText = "";
+
+    async Task SendReply()
+    {
+        if (OnReply.HasDelegate && !string.IsNullOrWhiteSpace(replyText))
+        {
+            await OnReply.InvokeAsync((Comment.Id, replyText.Trim()));
+            replyText = "";
+            replyOpen = false;
+        }
+    }
+}

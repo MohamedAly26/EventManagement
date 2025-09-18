@@ -1,11 +1,11 @@
 ﻿using EventManagement.Components;
 using EventManagement.Data;
 using EventManagement.Models;
-using EventManagement.Services;
 using EventManagement.Security;
-using Microsoft.AspNetCore.Components; 
-using System.Net.Http;
+using EventManagement.Services;
+
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.UI.Services;
@@ -18,33 +18,18 @@ using System.Text.Encodings.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ---------------------------------------------------------------------
-// DataProtection so Identity tokens survive restarts (store keys on disk)
+// ======================= DataProtection =======================
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(
         Path.Combine(builder.Environment.ContentRootPath, "keys")))
     .SetApplicationName("EventManagement");
 
-// Longer token lifetime for email confirmation
 builder.Services.Configure<DataProtectionTokenProviderOptions>(o =>
 {
     o.TokenLifespan = TimeSpan.FromDays(3);
 });
-// Policies: una per ogni permesso
-builder.Services.AddAuthorization(options =>
-{
-    foreach (var perm in Permissions.All)
-        options.AddPolicy(perm, p => p.Requirements.Add(new PermissionRequirement(perm)));
-});
 
-// Handler che valuta i claim dei RUOLI a runtime
-builder.Services.AddScoped<IAuthorizationHandler, PermissionHandler>();
-
-// (opzionale) segnale per ri-renderizzare il NavMenu dopo grant/revoke
-builder.Services.AddSingleton<UiSignal>();
-
-// ---------------------------------------------------------------------
-// Services
+// =========================== Services =========================
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -55,7 +40,14 @@ builder.Services.AddScoped<EventService>();
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents(o => o.DetailedErrors = true);
 
-// Auth + Identity
+// HttpClient per Blazor Server (base address = origin del sito)
+builder.Services.AddScoped(sp =>
+{
+    var nav = sp.GetRequiredService<NavigationManager>();
+    return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
+});
+
+// ===================== Auth + Identity ========================
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = IdentityConstants.ApplicationScheme;
@@ -64,19 +56,6 @@ builder.Services.AddAuthentication(options =>
 })
 .AddIdentityCookies();
 
-// Authorization with claim-based permission policies
-builder.Services.AddAuthorization(options =>
-{
-    foreach (var perm in Permissions.All)
-        options.AddPolicy(perm, p => p.RequireClaim(Permissions.ClaimType, perm));
-});
-builder.Services.AddCascadingAuthenticationState();
-
-// SMTP + email sender
-builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
-builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
-
-// Identity
 builder.Services
     .AddIdentityCore<IdentityUser>(options =>
     {
@@ -84,7 +63,7 @@ builder.Services
         options.SignIn.RequireConfirmedEmail = true;
         options.User.RequireUniqueEmail = true;
 
-        // dev-friendly password rules
+        // password “dev-friendly”
         options.Password.RequireNonAlphanumeric = false;
         options.Password.RequireUppercase = false;
         options.Password.RequireLowercase = false;
@@ -96,16 +75,28 @@ builder.Services
     .AddSignInManager()
     .AddApiEndpoints()
     .AddDefaultTokenProviders();
-builder.Services.AddScoped(sp =>
-{
-    var nav = sp.GetRequiredService<NavigationManager>();
-    return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
-});
-// ---------------------------------------------------------------------
-var app = builder.Build();
 
-// ---------------------------------------------------------------------
-// Pipeline
+// =================== Authorization (permessi) =================
+builder.Services.AddAuthorization(options =>
+{
+    foreach (var perm in Permissions.All)
+        options.AddPolicy(perm, p => p.Requirements.Add(new PermissionRequirement(perm)));
+});
+builder.Services.AddScoped<IAuthorizationHandler, PermissionHandler>();
+builder.Services.AddCascadingAuthenticationState();
+
+// (opzionale) segnale UI
+builder.Services.AddSingleton<UiSignal>();
+
+// ============================ Email ===========================
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+
+// ==============================================================
+var app = builder.Build();
+// ==============================================================
+
+// =========================== Pipeline =========================
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
@@ -115,11 +106,10 @@ app.UseAuthorization();
 app.MapRazorComponents<App>()
    .AddInteractiveServerRenderMode();
 
-// Minimal Identity endpoints (/login, /logout, /register, etc.)
 app.MapIdentityApi<IdentityUser>();
 
-// ---------------------------------------------------------------------
-// Account endpoints (forms post from your pages)
+// ==============================================================
+/* Account: login / register / confirm / resend / logout */
 const string ConfirmPath = "/account/confirm-email";
 
 // LOGIN
@@ -142,7 +132,7 @@ app.MapPost("/app-login", async (
     return result.Succeeded ? Results.Redirect("/") : Results.Redirect("/account/login?e=invalid");
 }).DisableAntiforgery();
 
-// REGISTER (send confirmation link)
+// REGISTER (invia link conferma)
 app.MapPost("/app-register", async (
     HttpContext ctx,
     UserManager<IdentityUser> users,
@@ -244,7 +234,7 @@ app.MapPost("/app-logout", async (SignInManager<IdentityUser> signIn) =>
     return Results.Redirect("/");
 }).DisableAntiforgery();
 
-// (optional) SMTP diag
+// (opzionale) Diagnostica SMTP
 app.MapGet("/diag/smtp", async (IEmailSender mail, HttpContext ctx) =>
 {
     var to = ctx.Request.Query["to"].ToString();
@@ -255,8 +245,7 @@ app.MapGet("/diag/smtp", async (IEmailSender mail, HttpContext ctx) =>
     return Results.Ok("Sent.");
 });
 
-// ---------------------------------------------------------------------
-// Helpers
+// ============================ Helpers =========================
 static string BuildBaseUrl(IConfiguration config, HttpContext ctx)
 {
     var pb = config["PublicBaseUrl"];
@@ -280,8 +269,7 @@ static async Task Grant(RoleManager<IdentityRole> rm, string roleName, string pe
         await rm.AddClaimAsync(role, new Claim(Permissions.ClaimType, perm));
 }
 
-// ---------------------------------------------------------------------
-// Seed (migrations, roles, permissions, admin, supervisor, events)
+// =========================== Seed DB ==========================
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
@@ -292,20 +280,19 @@ using (var scope = app.Services.CreateScope())
 
     await db.Database.MigrateAsync();
 
-    // Roles
+    // Ruoli
     await EnsureRole(roleMgr, "User");
     await EnsureRole(roleMgr, "Admin");
     await EnsureRole(roleMgr, "Supervisor");
 
-    // Admin: LIMITED permissions (events + view subscribers)
+    // Permessi
     await Grant(roleMgr, "Admin", Permissions.Names.ManageEvents);
     await Grant(roleMgr, "Admin", Permissions.Names.ViewSubscribers);
 
-    // Supervisor: ALL permissions (includes ManageUsers/ManageRoles)
     foreach (var p in Permissions.All)
         await Grant(roleMgr, "Supervisor", p);
 
-    // Admin seed (Admin role only)
+    // Admin seed
     var admin = await userMgr.FindByEmailAsync("admin@example.com");
     if (admin is null)
     {
@@ -319,11 +306,10 @@ using (var scope = app.Services.CreateScope())
     }
     if (!await userMgr.IsInRoleAsync(admin, "Admin"))
         await userMgr.AddToRoleAsync(admin, "Admin");
-    // ensure Admin is NOT Supervisor
     if (await userMgr.IsInRoleAsync(admin, "Supervisor"))
         await userMgr.RemoveFromRoleAsync(admin, "Supervisor");
 
-    // Supervisor seed (your email)
+    // Supervisor seed
     const string SupervisorEmail = "mohamedessamrere@gmail.com";
     var sup = await userMgr.FindByEmailAsync(SupervisorEmail);
     if (sup is null)
@@ -334,17 +320,14 @@ using (var scope = app.Services.CreateScope())
             Email = SupervisorEmail,
             EmailConfirmed = true
         };
-        // DEV password: change/remove in production
         await userMgr.CreateAsync(sup, "Supervisor123!");
     }
     if (!await userMgr.IsInRoleAsync(sup, "Supervisor"))
         await userMgr.AddToRoleAsync(sup, "Supervisor");
-
-    // (optional) Let Supervisor also access Admin-only screens that check Roles="Admin"
     if (!await userMgr.IsInRoleAsync(sup, "Admin"))
         await userMgr.AddToRoleAsync(sup, "Admin");
 
-    // Demo events
+    // Eventi demo
     if (!db.Events.Any())
     {
         db.Events.AddRange(

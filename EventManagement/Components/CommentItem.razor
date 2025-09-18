@@ -1,0 +1,86 @@
+﻿@using EventManagement.Models
+
+<div id="@($"c-{Comment.Id}")"
+     class="list-group-item"
+     style="@($"padding-left:{16 + Depth * 24}px; opacity:{(Comment.IsHidden ? 0.5 : 1)}; scroll-margin-top:80px")">
+    <div class="d-flex justify-content-between">
+        <div>
+            <b>@Comment.UserDisplayName</b>
+            <small class="text-muted"> · @Comment.CreatedAt.ToLocalTime()</small>
+            @if (Comment.FromAdmin)
+            {
+                <span class="badge text-bg-secondary ms-1">admin</span>
+            }
+        </div>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" @onclick="() => reply = !reply">Reply</button>
+            <button class="btn btn-outline-warning" @onclick="() => OnHide.InvokeAsync(Comment.Id)">
+                @(Comment.IsHidden ? "Unhide" : "Hide")
+            </button>
+            <button class="btn btn-outline-danger" @onclick="() => OnDelete.InvokeAsync(Comment.Id)">Delete</button>
+        </div>
+    </div>
+
+    <div class="mt-1">@Comment.Body</div>
+
+    @if (reply)
+    {
+        <div class="mt-2">
+            <textarea class="form-control" rows="2" @bind="text"></textarea>
+            <button class="btn btn-primary btn-sm mt-1"
+                    @onclick="Send"
+                    disabled="@string.IsNullOrWhiteSpace(text)">
+                Send
+            </button>
+        </div>
+    }
+
+    @if (Comment.Replies?.Any() == true)
+    {
+        @foreach (var r in Comment.Replies)
+        {
+            <CommentItem Comment="r"
+                         Depth="@(Depth + 1)"
+                         OnReply="OnReply"
+                         OnReplyRaw="OnReplyRaw"
+                         OnHide="OnHide"
+                         OnDelete="OnDelete" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Comment Comment { get; set; } = default!;
+    [Parameter] public int Depth { get; set; } = 0;
+
+    [Parameter] public EventCallback<int> OnHide { get; set; }
+    [Parameter] public EventCallback<int> OnDelete { get; set; }
+
+    // Mantengo entrambe le varianti per compatibilità:
+    // - OnReply (solo id)  -> EventCallback<int>
+    // - OnReplyRaw (id, body) -> EventCallback<(int parentId, string body)>
+    [Parameter] public EventCallback<int> OnReply { get; set; }
+    [Parameter] public EventCallback<(int parentId, string body)> OnReplyRaw { get; set; }
+
+    bool reply;
+    string text = "";
+
+    async Task Send()
+    {
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            if (OnReplyRaw.HasDelegate)
+            {
+                // preferisci la versione completa se disponibile
+                await OnReplyRaw.InvokeAsync((Comment.Id, text));
+            }
+            else if (OnReply.HasDelegate)
+            {
+                // fallback: vecchia firma solo con l'id
+                await OnReply.InvokeAsync(Comment.Id);
+            }
+        }
+        reply = false;
+        text = "";
+    }
+}

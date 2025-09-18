@@ -68,9 +68,9 @@
                     var u = auth.User;
 
                     // etichetta ruolo "nota" se esiste; altrimenti fallback su nome/email
-                    string roleLabel =
-                    u.IsInRole("Supervisor") ? "Supervisor" :
-                    u.IsInRole("Admin") ? "Admin" : null;
+                    
+                    string roleLabel = u.IsInRole("Supervisor") ? "Supervisor" :
+                    u.IsInRole("Admin") ? "Admin" : string.Empty;
 
                     string display =
                     roleLabel
@@ -98,6 +98,7 @@
             </NotAuthorized>
         </AuthorizeView>
     </div>
+  
 </nav>
 
 @code { }

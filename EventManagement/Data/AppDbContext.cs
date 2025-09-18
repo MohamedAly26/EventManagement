@@ -11,39 +11,74 @@ public class AppDbContext : IdentityDbContext<IdentityUser>
 
     public DbSet<Event> Events => Set<Event>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<Comment> Comments => Set<Comment>();     // <-- nuovo
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // Required when inheriting from IdentityDbContext
+        // Necessario con IdentityDbContext
         base.OnModelCreating(modelBuilder);
 
-        // ---- Event configuration ----
+        // -------------------- Event --------------------
         modelBuilder.Entity<Event>(e =>
         {
-            e.Property(x => x.Title)
-             .HasMaxLength(200);
-            // Add other constraints if you wish (e.g., .IsRequired())
+            e.Property(x => x.Title).HasMaxLength(200);
+            // e.Property(x => x.Title).IsRequired(); // se vuoi vincolo NotNull
         });
 
-        // ---- Subscription configuration ----
+
+        // ----------------- Subscription ----------------
         modelBuilder.Entity<Subscription>(s =>
         {
-            // Key is inferred from Id, but we can be explicit
             s.HasKey(x => x.Id);
 
-            // Many Subscriptions -> One Event (cascade on delete)
+            // N:1 con Event (cascade on delete)
             s.HasOne(x => x.Event)
              .WithMany(e => e.Subscriptions)
              .HasForeignKey(x => x.EventId)
              .OnDelete(DeleteBehavior.Cascade);
 
-            // Default timestamp for SQLite; for SQL Server use: GETUTCDATE()
+            // Default timestamp (SQLite). Per SQL Server: .HasDefaultValueSql("GETUTCDATE()")
             s.Property(x => x.DataSubscription)
              .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-            // Prevent duplicate subscriptions for the same user on the same event
-            s.HasIndex(x => new { x.EventId, x.UserId })
-             .IsUnique();
+            // Evita doppie iscrizioni stesso utente stesso evento
+            s.HasIndex(x => new { x.EventId, x.UserId }).IsUnique();
         });
+
+        // ------------------- Comment -------------------
+        // ---- Comment configuration ----
+        modelBuilder.Entity<Comment>(c =>
+        {
+            c.HasKey(x => x.Id);
+
+            c.Property(x => x.Body)
+             .IsRequired()
+             .HasMaxLength(3000);
+
+            // timestamp di default (SQLite). Per SQL Server -> "GETUTCDATE()"
+            c.Property(x => x.CreatedAt)
+             .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            // La proprietà Replies è usata solo in UI per costruire l'albero
+            c.Ignore(x => x.Replies);
+
+            // Relazione -> Event (senza navigazione nel POCO)
+            c.HasOne<Event>()               // principal type
+             .WithMany()                    // nessuna navigazione su Event
+             .HasForeignKey(x => x.EventId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            // Relazione self-reference (parent/child) senza navigazioni nel POCO
+            c.HasOne<Comment>()             // parent
+             .WithMany()                    // non usiamo la collezione su parent
+             .HasForeignKey(x => x.ParentId)
+             .OnDelete(DeleteBehavior.Cascade)
+             .IsRequired(false);
+
+            // Indici utili
+            c.HasIndex(x => new { x.EventId, x.ParentId, x.CreatedAt });
+        });
+
+
     }
 }
