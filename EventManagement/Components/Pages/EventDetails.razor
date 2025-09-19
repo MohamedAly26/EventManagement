@@ -140,6 +140,23 @@ else
         !string.IsNullOrEmpty(currentUserId) &&
         (isSubscribed || (!isFull && !isClosed));
 
+    private static string BuildDisplayName(ClaimsPrincipal u)
+    {
+        if (u.IsInRole("Supervisor")) return "Supervisor";
+        if (u.IsInRole("Admin")) return "Admin";
+
+        var disp = u.FindFirst("name")?.Value
+                ?? u.FindFirst(ClaimTypes.GivenName)?.Value
+                ?? u.Identity?.Name
+                ?? u.FindFirst(ClaimTypes.Email)?.Value
+                ?? "User";
+
+        var at = disp.IndexOf('@');
+        if (at > 0) disp = disp[..at];
+        return disp;
+    }
+
+
     protected override async Task OnInitializedAsync()
     {
         // Event
@@ -192,13 +209,13 @@ else
         if (!(u.Identity?.IsAuthenticated ?? false)) return;
 
         var userId = u.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
-        var disp = u.Identity?.Name ?? u.FindFirst(ClaimTypes.Email)?.Value ?? "User";
-
+        var disp = BuildDisplayName(u);
         Db.Comments.Add(new Comment
         {
             EventId = Id,
             Body = newText.Trim(),
             UserId = userId,
+
             UserDisplayName = disp,
             FromAdmin = false
         });
@@ -217,8 +234,7 @@ else
         if (!(u.Identity?.IsAuthenticated ?? false)) return;
 
         var userId = u.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
-        var disp = u.Identity?.Name ?? u.FindFirst(ClaimTypes.Email)?.Value ?? "User";
-
+        var disp = BuildDisplayName(u);
         var parent = await Db.Comments.FindAsync(data.parentId);
         if (parent is null) return;
 

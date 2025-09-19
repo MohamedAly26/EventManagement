@@ -103,25 +103,28 @@ else
     /// </summary>
     private async Task PostReply((int parentId, string body) data)
     {
+    
+
+        var text = (data.body ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text)) return;
+
         var auth = await AuthenticationStateTask;
         var me = await Users.GetUserAsync(auth.User);
         if (me is null) return;
 
-        var text = (data.body ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(text)) return;
+        var disp = auth.User.IsInRole("Supervisor") ? "Supervisor" : "Admin";
 
         Db.Comments.Add(new Comment
         {
             EventId = EventId,
             ParentId = data.parentId,
-            Body = text,
+            Body = data.body,
             UserId = me.Id,
-            UserDisplayName = me.Email ?? me.UserName ?? "Admin",
+            UserDisplayName = disp,   // <<— sempre “Supervisor” o “Admin”
             FromAdmin = true
         });
-
         await Db.SaveChangesAsync();
-        await LoadAsync(); // ricarica "pulito"
+        await OnInitializedAsync();
     }
 
     private async Task ToggleHide(int id)
