@@ -4,7 +4,8 @@
 @using Microsoft.EntityFrameworkCore
 @using EventManagement.Security
 
-@attribute [Authorize(Policy = Permissions.Names.ManageUsers)]
+@attribute [Authorize(Policy = EventManagement.Security.Permissions.Names.ManageUsers)]
+
 
 @inject UserManager<IdentityUser> UserMgr
 @inject RoleManager<IdentityRole> RoleMgr

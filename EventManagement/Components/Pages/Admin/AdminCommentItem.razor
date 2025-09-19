@@ -1,75 +1,149 @@
 ﻿@using EventManagement.Models
+@using Microsoft.AspNetCore.Components.Web
+@using EventManagement.Shared
 
-<div class="mb-2" style="@($"margin-left:{Depth * 16}px")">
-    <div class="small text-muted">
-        <b>@Comment.UserDisplayName</b>
-        @if (Comment.FromAdmin)
-        {
-            <span class="badge bg-secondary ms-1">staff</span>
-        }
-        · @Comment.CreatedAt.ToLocalTime().ToString("g")
-    </div>
-
-    <div>@Comment.Body</div>
-
-    <div class="mt-1">
-        <button class="btn btn-sm btn-outline-secondary me-2"
-                @onclick="() => OnHide.InvokeAsync(Comment.Id)">
-            @(Comment.IsHidden ? "Unhide" : "Hide")
-        </button>
-
-        <button class="btn btn-sm btn-outline-danger me-2"
-                @onclick="() => OnDelete.InvokeAsync(Comment.Id)">
-            Delete
-        </button>
-
-        <button class="btn btn-sm btn-link"
-                @onclick="() => replyOpen = !replyOpen">
-            Reply
-        </button>
-    </div>
-
-    @if (replyOpen)
-    {
-        <div class="mt-2">
-            <textarea class="form-control" rows="2" @bind="replyText"></textarea>
-            <button class="btn btn-sm btn-primary mt-1" @onclick="SendReply">Send</button>
+<div class="chat-item ps-@((Depth * 20)) @(Comment.IsHidden ? "opacity-50" : null)">
+    <div class="d-flex gap-2">
+        <!-- Avatar -->
+        <div class="flex-shrink-0">
+            <div class="chat-avatar rounded-circle text-white
+                        @(Comment.FromAdmin ? "bg-secondary" : "bg-primary")">
+                @Initials(Comment.UserDisplayName)
+            </div>
         </div>
-    }
 
-    @if (Comment.Replies?.Count > 0)
-    {
-        <div class="ms-3 mt-2">
-            @foreach (var r in Comment.Replies.OrderBy(x => x.CreatedAt))
+        <div class="flex-grow-1">
+            <!-- Header -->
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <strong>@DisplayName(Comment)</strong>
+                @if (Comment.FromAdmin)
+                {
+                    <span class="badge bg-secondary">staff</span>
+                }
+                <small class="text-muted">· @Comment.CreatedAt.ToLocalTime().ToString("g")</small>
+                @if (Comment.IsHidden)
+                {
+                    <span class="badge bg-warning text-dark">hidden</span>
+                }
+            </div>
+
+            <!-- Bubble (compattata) -->
+            <div class="chat-bubble @(Comment.FromAdmin ? "chat-bubble-admin" : "chat-bubble-user") comment-bubble mt-1">
+                @Md.ToHtml((Comment.Body ?? string.Empty).TrimEnd())
+            </div>
+
+            <!-- Actions -->
+            <div class="mt-1 d-flex gap-3 small">
+                <button class="btn btn-link p-0" @onclick="() => replyOpen = !replyOpen">Reply</button>
+                <button class="btn btn-link p-0 text-warning" @onclick="() => OnHide.InvokeAsync(Comment.Id)">
+                    @(Comment.IsHidden ? "Unhide" : "Hide")
+                </button>
+                <button class="btn btn-link p-0 text-danger" @onclick="() => OnDelete.InvokeAsync(Comment.Id)">
+                    Delete
+                </button>
+            </div>
+
+            <!-- Reply editor -->
+            @if (replyOpen)
             {
-                <AdminCommentItem Comment="r"
-                                  Depth="@(Depth + 1)"
-                                  OnReply="OnReply"
-                                  OnHide="OnHide"
-                                  OnDelete="OnDelete" />
+                <div class="mt-2">
+                    <textarea class="form-control" rows="2" placeholder="Write a reply…"
+                              @bind="replyText" @bind:event="oninput" @onkeydown="HandleKey"></textarea>
+                    <div class="d-flex gap-2 mt-2">
+                        <button class="btn btn-sm btn-primary"
+                                disabled="@string.IsNullOrWhiteSpace(replyText)"
+                                @onclick="SendReply">
+                            Send
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                @onclick="() => { replyOpen = false; replyText = string.Empty; }">
+                            Cancel
+                        </button>
+                    </div>
+                    <div class="form-text">Enter = send · Shift+Enter = newline</div>
+                </div>
+            }
+
+            <!-- Children -->
+            @if (Comment.Replies?.Any() == true)
+            {
+                <div class="chat-children">
+                    @foreach (var r in Comment.Replies)
+                    {
+                        <AdminCommentItem Comment="r"
+                                          Depth="Depth + 1"
+                                          OnReply="OnReply"
+                                          OnHide="OnHide"
+                                          OnDelete="OnDelete" />
+                    }
+                </div>
             }
         </div>
-    }
+    </div>
 </div>
 
 @code {
     [Parameter] public required Comment Comment { get; set; }
-    [Parameter] public int Depth { get; set; }
-    [Parameter] public EventCallback<(int parentId, string body)> OnReply { get; set; }
+    [Parameter] public int Depth { get; set; } = 0;
+
     [Parameter] public EventCallback<int> OnHide { get; set; }
     [Parameter] public EventCallback<int> OnDelete { get; set; }
-
+    [Parameter] public EventCallback<(int parentId, string body)> OnReply { get; set; }
 
     bool replyOpen;
-    string replyText = "";
+    string replyText = string.Empty;
 
     async Task SendReply()
     {
         var body = replyText?.Trim();
-        if (!string.IsNullOrEmpty(body) && OnReply.HasDelegate)
+        if (string.IsNullOrWhiteSpace(body)) return;
+
+        if (OnReply.HasDelegate)
             await OnReply.InvokeAsync((Comment.Id, body));
 
-        replyText = "";
+        replyText = string.Empty;
         replyOpen = false;
+    }
+
+    // Enter = invia, Shift+Enter = a capo
+    Task HandleKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            _ = SendReply();
+            return Task.CompletedTask;
+        }
+        return Task.CompletedTask;
+    }
+
+    static string DisplayName(Comment c)
+    {
+        // Mostra etichetta di ruolo per lo staff
+        var d = c.UserDisplayName?.Trim();
+        if (c.FromAdmin)
+        {
+            if (!string.IsNullOrEmpty(d) && d.Contains("supervisor", StringComparison.OrdinalIgnoreCase))
+                return "Supervisor";
+            if (!string.IsNullOrEmpty(d) && d.Contains("admin", StringComparison.OrdinalIgnoreCase))
+                return "Admin";
+            return "Staff";
+        }
+
+        // Utente: rimuovi dominio se è un'email
+        if (!string.IsNullOrWhiteSpace(d))
+        {
+            var at = d.IndexOf('@');
+            if (at > 0) d = d[..at];
+            return d;
+        }
+        return "User";
+    }
+
+    static string Initials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1) return parts[0][0].ToString().ToUpperInvariant();
+        return (parts[0][0].ToString() + parts[^1][0].ToString()).ToUpperInvariant();
     }
 }

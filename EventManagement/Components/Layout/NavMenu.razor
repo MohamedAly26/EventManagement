@@ -1,14 +1,13 @@
 ﻿@using System.Security.Claims
 @using Microsoft.AspNetCore.Components.Authorization
 @using EventManagement.Security
-@inject NavigationManager Nav
 
 <nav class="sidebar p-3">
     <div class="brand fw-bold mb-3">EventManagement</div>
 
     <div class="text-uppercase text-muted small mb-2">Administration</div>
 
-    <!-- Mostra se l'utente ha il permesso: events.manage -->
+    <!-- Manage Events -->
     <AuthorizeView Policy="@Permissions.Names.ManageEvents">
         <Authorized>
             <NavLink href="/admin/events" Match="NavLinkMatch.All" class="nav-link rounded mb-1">
@@ -17,8 +16,8 @@
         </Authorized>
     </AuthorizeView>
 
-    <!-- Mostra se l'utente ha il permesso: permissions.configure (es. Supervisor) -->
-    <AuthorizeView Policy="@Permissions.Names.PermissionsConfigure">
+    <!-- Role Permissions (solo chi ha il permesso di gestire i ruoli) -->
+    <AuthorizeView Policy="@Permissions.Names.ManageRoles">
         <Authorized>
             <NavLink href="/admin/rolepermissions" class="nav-link rounded mb-1">
                 <span class="oi oi-shield me-2"></span>Role Permissions
@@ -26,7 +25,7 @@
         </Authorized>
     </AuthorizeView>
 
-    <!-- Mostra se l'utente ha il permesso: users.manage (es. Supervisor) -->
+    <!-- User Management -->
     <AuthorizeView Policy="@Permissions.Names.ManageUsers">
         <Authorized>
             <NavLink href="/admin/users" class="nav-link rounded mb-1">
@@ -35,12 +34,12 @@
         </Authorized>
     </AuthorizeView>
 
-    <!-- Utente autenticato ma senza permessi "admin": menu standard -->
+    <!-- Link "utente normale": mostrali solo se non ha permessi admin -->
     <AuthorizeView Context="auth">
         <Authorized>
-            @if (!auth.User.HasClaim(Permissions.ClaimType, Permissions.Names.ManageEvents) &&
-                        !auth.User.HasClaim(Permissions.ClaimType, Permissions.Names.PermissionsConfigure) &&
-                        !auth.User.HasClaim(Permissions.ClaimType, Permissions.Names.ManageUsers))
+            @if (!auth.User.HasClaim(Permissions.ClaimType, Permissions.Names.ManageEvents)
+                        && !auth.User.HasClaim(Permissions.ClaimType, Permissions.Names.ManageRoles)
+                        && !auth.User.HasClaim(Permissions.ClaimType, Permissions.Names.ManageUsers))
             {
                 <NavLink href="/" Match="NavLinkMatch.All" class="nav-link rounded mb-1">
                     <span class="oi oi-home me-2"></span>Home
@@ -52,7 +51,6 @@
             }
         </Authorized>
 
-        <!-- Anonimo -->
         <NotAuthorized>
             <NavLink href="/" Match="NavLinkMatch.All" class="nav-link rounded mb-1">
                 <span class="oi oi-home me-2"></span>Home
@@ -60,21 +58,20 @@
         </NotAuthorized>
     </AuthorizeView>
 
-    <!-- Saluto + Logout/Login -->
+    <!-- Saluto + Logout / Login -->
     <div class="mt-3">
         <AuthorizeView Context="auth">
             <Authorized>
                 @{
                     var u = auth.User;
 
-                    // etichetta ruolo "nota" se esiste; altrimenti fallback su nome/email
-                    
-                    string roleLabel = u.IsInRole("Supervisor") ? "Supervisor" :
-                    u.IsInRole("Admin") ? "Admin" : string.Empty;
+                    // Etichetta “Supervisor”/“Admin” se presente, altrimenti fallback su nome/email
+                    string? roleLabel = u.IsInRole("Supervisor") ? "Supervisor"
+                    : (u.IsInRole("Admin") ? "Admin" : null);
 
-                    string display =
-                    roleLabel
-                    ?? (u.FindFirst("name")?.Value
+                    string display = !string.IsNullOrEmpty(roleLabel)
+                    ? roleLabel
+                    : (u.FindFirst("name")?.Value
                     ?? u.FindFirst(ClaimTypes.GivenName)?.Value
                     ?? u.FindFirst(ClaimTypes.Name)?.Value
                     ?? u.FindFirst(ClaimTypes.Email)?.Value
@@ -98,7 +95,6 @@
             </NotAuthorized>
         </AuthorizeView>
     </div>
-  
 </nav>
 
 @code { }

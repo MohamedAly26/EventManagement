@@ -1,6 +1,6 @@
 ﻿@page "/admin/events"
 @rendermode InteractiveServer
-@attribute [Authorize(Policy = "events.manage")]
+@attribute [Authorize(Policy = EventManagement.Security.Permissions.Names.ManageEvents)]
 @using EventManagement.Models
 @inject EventManagement.Services.EventService EventService
 @inject NavigationManager Nav

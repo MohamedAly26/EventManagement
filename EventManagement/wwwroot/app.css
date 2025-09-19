@@ -82,3 +82,59 @@ h1:focus {
     opacity: .8;
     padding: .25rem .4rem;
 }
+
+/* Chat look & feel */
+.chat-item {
+    padding-block: .75rem;
+    border-bottom: 1px solid #eef1f4;
+}
+
+.chat-avatar {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+}
+
+.chat-bubble {
+    display: inline-block;
+    padding: .6rem .85rem;
+    border-radius: 1rem;
+    border: 1px solid #e9ecef;
+    max-width: 100%;
+    white-space: pre-wrap; /* rispetta \n */
+    word-wrap: break-word;
+}
+
+.chat-bubble-user {
+    background-color: #f8f9fa;
+}
+
+.chat-bubble-admin {
+    background-color: #eef2ff;
+}
+
+.chat-children {
+    margin-top: .5rem;
+    margin-left: 20px; /* rientro figli */
+    padding-left: 14px;
+    border-left: 2px solid #eef1f4; /* “timeline” verticale */
+}
+/* Bolla del messaggio */
+/* wwwroot/app.css */
+.comment-bubble {
+    display: inline-block;
+    background: #eef2ff; /* o i tuoi colori */
+    border-radius: .75rem;
+    padding: .25rem .5rem; /* meno spazio verticale */
+    line-height: 1.2;
+    white-space: pre-wrap;
+}
+
+    .comment-bubble p {
+        margin: 0;
+    }
+/* se il Markdown genera <p> */
+

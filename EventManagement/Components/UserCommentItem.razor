@@ -1,65 +1,138 @@
 ﻿@using EventManagement.Models
+@using Microsoft.AspNetCore.Components.Web
+@using EventManagement.Shared
 
-<div class="mb-2" style="margin-left:@(Depth * 16)px">
-    <div class="small text-muted">
-        <b>@Comment.UserDisplayName</b>
-        @if (Comment.FromAdmin)
-        {
-            <span class="badge bg-secondary ms-1">staff</span>
-        }
-        · @Comment.CreatedAt.ToLocalTime().ToString("g")
-    </div>
-
-    <div>@Comment.Body</div>
-
-    <div class="mt-1">
-        <button type="button"
-                class="btn btn-sm btn-link"
-                @onclick="() => replyOpen = !replyOpen">
-            Reply
-        </button>
-    </div>
-
-    @if (replyOpen)
-    {
-        <div class="mt-2">
-            <textarea class="form-control" rows="2" @bind="replyText"></textarea>
-            <button class="btn btn-sm btn-primary mt-1"
-                    disabled="@string.IsNullOrWhiteSpace(replyText)"
-                    @onclick="SendReply">
-                Send
-            </button>
+<div class="chat-item ps-@((Depth * 20)) @(Comment.IsHidden ? "opacity-50" : null)">
+    <div class="d-flex gap-2">
+        <!-- Avatar con iniziali -->
+        <div class="flex-shrink-0">
+            <div class="chat-avatar rounded-circle text-white
+                        @(Comment.FromAdmin ? "bg-secondary" : "bg-primary")">
+                @Initials(Comment.UserDisplayName)
+            </div>
         </div>
-    }
 
-    @if (Comment.Replies?.Count > 0)
-    {
-        @foreach (var r in Comment.Replies)
-        {
-            <UserCommentItem Comment="r"
-                             Depth="@(Depth + 1)"
-                             OnReply="OnReply" />
-        }
-    }
+        <div class="flex-grow-1">
+            <!-- Header -->
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <strong>@DisplayName(Comment)</strong>
+                @if (Comment.FromAdmin)
+                {
+                    <span class="badge bg-secondary ms-1">staff</span>
+                }
+                <small class="text-muted">· @Comment.CreatedAt.ToLocalTime().ToString("g")</small>
+            </div>
+
+            <!-- Bubble (compattata) -->
+            <div class="chat-bubble @(Comment.FromAdmin ? "chat-bubble-admin" : "chat-bubble-user") comment-bubble mt-1">
+                @Md.ToHtml((Comment.Body ?? string.Empty).TrimEnd())
+            </div>
+
+            <!-- Azioni utente -->
+            <div class="mt-1 d-flex gap-3 small">
+                <button class="btn btn-link p-0" @onclick="() => replyOpen = !replyOpen">Reply</button>
+            </div>
+
+            <!-- Editor risposta -->
+            @if (replyOpen)
+            {
+                <div class="mt-2">
+                    <textarea class="form-control" rows="2" placeholder="Write a reply…"
+                              @bind="replyText" @bind:event="oninput" @onkeydown="HandleKey"></textarea>
+                    <div class="d-flex gap-2 mt-2">
+                        <button class="btn btn-sm btn-primary"
+                                disabled="@string.IsNullOrWhiteSpace(replyText)"
+                                @onclick="SendReply">
+                            Send
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                @onclick="() => { replyOpen = false; replyText = string.Empty; }">
+                            Cancel
+                        </button>
+                    </div>
+                    <div class="form-text">Enter = send · Shift+Enter = newline</div>
+                </div>
+            }
+
+            <!-- Figli -->
+            @if (Comment.Replies?.Any() == true)
+            {
+                <div class="chat-children">
+                    @foreach (var r in Comment.Replies)
+                    {
+                        <UserCommentItem Comment="r"
+                                         Depth="Depth + 1"
+                                         OnReply="OnReply" />
+                    }
+                </div>
+            }
+        </div>
+    </div>
 </div>
 
 @code {
     [Parameter] public required Comment Comment { get; set; }
     [Parameter] public int Depth { get; set; } = 0;
 
-    // NB: firma coerente con EventDetails: EventCallback<(int parentId, string body)>
+    // callback richiesta da EventDetails: (int parentId, string body)
     [Parameter] public EventCallback<(int parentId, string body)> OnReply { get; set; }
 
     bool replyOpen;
-    string replyText = "";
+    string replyText = string.Empty;
+
+    private static string DisplayName(Comment c)
+    {
+        var d = c.UserDisplayName?.Trim();
+
+        // Staff: mostra etichetta
+        if (c.FromAdmin)
+        {
+            if (!string.IsNullOrEmpty(d) && d.Contains("supervisor", StringComparison.OrdinalIgnoreCase))
+                return "Supervisor";
+            if (!string.IsNullOrEmpty(d) && d.Contains("admin", StringComparison.OrdinalIgnoreCase))
+                return "Admin";
+            return "Staff";
+        }
+
+        // Utente normale: lascia solo la parte prima di '@'
+        if (!string.IsNullOrWhiteSpace(d))
+        {
+            var at = d.IndexOf('@');
+            if (at > 0) d = d[..at];
+            return d;
+        }
+
+        return "User";
+    }
 
     async Task SendReply()
     {
-        if (OnReply.HasDelegate && !string.IsNullOrWhiteSpace(replyText))
+        var body = replyText?.Trim();
+        if (string.IsNullOrWhiteSpace(body)) return;
+
+        if (OnReply.HasDelegate)
+            await OnReply.InvokeAsync((Comment.Id, body));
+
+        replyText = string.Empty;
+        replyOpen = false;
+    }
+
+    // Enter = invia, Shift+Enter = a capo
+    Task HandleKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
         {
-            await OnReply.InvokeAsync((Comment.Id, replyText.Trim()));
-            replyText = "";
-            replyOpen = false;
+            _ = SendReply();
+            return Task.CompletedTask;
         }
+        return Task.CompletedTask;
+    }
+
+    static string Initials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1) return parts[0][0].ToString().ToUpperInvariant();
+        return (parts[0][0].ToString() + parts[^1][0].ToString()).ToUpperInvariant();
     }
 }
