@@ -126,7 +126,7 @@ app.MapPost("/app-login", async (
     if (user is null) return Results.Redirect("/account/login?e=invalid");
 
     if (users.Options.SignIn.RequireConfirmedAccount && !user.EmailConfirmed)
-        return Results.Redirect("/account/login?e=confirm");
+        return Results.Redirect($"/account/login?e=confirm&email={Uri.EscapeDataString(email)}");
 
     var result = await signIn.PasswordSignInAsync(user, password, isPersistent: true, lockoutOnFailure: false);
     return result.Succeeded ? Results.Redirect("/") : Results.Redirect("/account/login?e=invalid");

@@ -2,13 +2,18 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@using System.Security.Claims
 @using EventManagement.Security
+@using EventManagement.Data
+@using EventManagement.Models
 
 @attribute [Authorize(Policy = EventManagement.Security.Permissions.Names.ManageUsers)]
 
-
 @inject UserManager<IdentityUser> UserMgr
 @inject RoleManager<IdentityRole> RoleMgr
+@inject AppDbContext Db
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
 
 <h3>User Management</h3>
 
@@ -34,16 +39,21 @@ else
                 <th>Confirmed</th>
                 <th>Roles</th>
                 <th style="width:340px">Add role</th>
+                <th class="text-end" style="width:120px">Actions</th>
             </tr>
         </thead>
         <tbody>
             @foreach (var u in users)
             {
+                var canDelete = iAmSupervisor
+                && !u.Roles.Contains("Supervisor", StringComparer.OrdinalIgnoreCase)
+                && u.Id != myId
+                && !string.Equals(u.Email, "admin@example.com", StringComparison.OrdinalIgnoreCase);
+
                 <tr>
                     <td>@u.Email</td>
                     <td>@(u.EmailConfirmed ? "✓" : "✗")</td>
                     <td>
-                   
                         @foreach (var r in u.Roles)
                         {
                             <span class="badge bg-secondary text-white me-1 align-middle">
@@ -55,10 +65,7 @@ else
                                     &times;
                                 </button>
                             </span>
-                        
                         }
-                 
-
                     </td>
                     <td>
                         <div class="d-flex gap-2">
@@ -77,6 +84,16 @@ else
                             </button>
                         </div>
                     </td>
+                    <td class="text-end">
+                        @if (canDelete)
+                        {
+                            <button class="btn btn-sm btn-outline-danger"
+                                    disabled="@busy"
+                                    @onclick="() => ConfirmDelete(u)">
+                                Delete
+                            </button>
+                        }
+                    </td>
                 </tr>
             }
         </tbody>
@@ -84,18 +101,27 @@ else
 }
 
 @code {
+    // view model per la tabella
     record UserVm(string Id, string Email, bool EmailConfirmed, string[] Roles);
 
     List<UserVm>? users;
     List<string> roles = new();
     string? error;
     bool busy;
-    readonly Dictionary<string, string> _selected = new(); // userId -> role scelto
+    readonly Dictionary<string, string> _selected = new(); // userId -> ruolo selezionato
+
+    string? myId;
+    bool iAmSupervisor;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
+            var st = await Auth.GetAuthenticationStateAsync();
+            var me = st.User;
+            myId = me.FindFirstValue(ClaimTypes.NameIdentifier);
+            iAmSupervisor = me.IsInRole("Supervisor");
+
             await LoadAll();
         }
         catch (Exception ex)
@@ -106,8 +132,7 @@ else
 
     private async Task LoadAll()
     {
-        // utenti
-        var list = await UserMgr.Users.ToListAsync();
+        var list = await UserMgr.Users.OrderBy(u => u.Email).ToListAsync();
         var acc = new List<UserVm>(list.Count);
         foreach (var u in list)
         {
@@ -116,7 +141,6 @@ else
         }
         users = acc;
 
-        // ruoli disponibili
         roles = await RoleMgr.Roles
             .Select(r => r.Name!)
             .OrderBy(n => n)
@@ -125,6 +149,7 @@ else
 
     async Task AddRole(UserVm u)
     {
+        error = null;
         if (!_selected.TryGetValue(u.Id, out var role) || string.IsNullOrWhiteSpace(role))
             return;
 
@@ -136,6 +161,7 @@ else
 
             var res = await UserMgr.AddToRoleAsync(user, role);
             if (!res.Succeeded) error = string.Join("; ", res.Errors.Select(e => e.Description));
+
             await LoadAll();
         }
         finally { busy = false; StateHasChanged(); }
@@ -143,6 +169,7 @@ else
 
     async Task RemoveRole(UserVm u, string role)
     {
+        error = null;
         busy = true; StateHasChanged();
         try
         {
@@ -151,6 +178,46 @@ else
 
             var res = await UserMgr.RemoveFromRoleAsync(user, role);
             if (!res.Succeeded) error = string.Join("; ", res.Errors.Select(e => e.Description));
+
+            await LoadAll();
+        }
+        finally { busy = false; StateHasChanged(); }
+    }
+
+    async Task ConfirmDelete(UserVm u)
+    {
+        var ok = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Delete user '{u.Email}'?\nThis will also remove their comments and subscriptions.");
+        if (!ok) return;
+
+        await DeleteUser(u);
+    }
+
+    async Task DeleteUser(UserVm u)
+    {
+        error = null;
+        busy = true; StateHasChanged();
+
+        try
+        {
+            var user = await UserMgr.FindByIdAsync(u.Id);
+            if (user is null) return;
+
+            // protezioni extra
+            var targetRoles = await UserMgr.GetRolesAsync(user);
+            if (targetRoles.Contains("Supervisor", StringComparer.OrdinalIgnoreCase) || user.Id == myId)
+                return;
+
+            // 1) Dati collegati (evita errori FK)
+            Db.Subscriptions.RemoveRange(Db.Subscriptions.Where(s => s.UserId == u.Id));
+            Db.Comments.RemoveRange(Db.Comments.Where(c => c.UserId == u.Id));
+            await Db.SaveChangesAsync();
+
+            // 2) Utente Identity
+            var res = await UserMgr.DeleteAsync(user);
+            if (!res.Succeeded) error = string.Join("; ", res.Errors.Select(e => e.Description));
+
             await LoadAll();
         }
         finally { busy = false; StateHasChanged(); }
