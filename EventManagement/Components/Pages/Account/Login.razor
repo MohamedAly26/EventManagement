@@ -1,49 +1,65 @@
 ﻿@page "/account/login"
 @rendermode InteractiveServer
-
 @using Microsoft.AspNetCore.WebUtilities
 @inject NavigationManager Nav
 
-<h3>Login</h3>
-
-@if (!string.IsNullOrEmpty(_err))
+@if (_err == "confirm")
 {
-    <div class="alert alert-@(_err == "confirm" ? "warning" : "danger")">
+    <div class="alert alert-warning d-flex justify-content-between align-items-center">
+        <span>Please confirm your email before logging in.</span>
+
+        <a class="btn btn-sm btn-outline-primary"
+           href="@($"/account/resend-confirmation{(string.IsNullOrWhiteSpace(_email) ? "" : $"?email={Uri.EscapeDataString(_email!)}")}")">
+            Resend confirmation
+        </a>
+    </div>
+}
+else if (!string.IsNullOrEmpty(_err))
+{
+    <div class="alert alert-danger">
         @(
             _err switch
             {
-                "confirm" => "Please confirm your email before logging in.",
                 "invalid" => "Invalid email or password.",
                 "err" => "Unexpected error. Try again.",
                 _ => "Login failed."
             }
             )
-</div>
+    </div>
 }
 
-<form method="post" action="/app-login" class="card p-3" autocomplete="on">
-    <div class="mb-3">
-        <label class="form-label">Email</label>
-        <input name="email" type="email" class="form-control" required />
-    </div>
 
-    <div class="mb-3">
-        <label class="form-label">Password</label>
-        <input name="password" type="password" class="form-control" required />
-    </div>
+<div class="auth-shell">
+    <form method="post" action="/app-login" class="card shadow-sm p-4 auth-card" autocomplete="on">
+        <h4 class="text-center mb-3">Login</h4>
 
-    <button type="submit" class="btn btn-primary">Login</button>
-    <a class="btn btn-link" href="/account/register">Register</a>
-</form>
+        <div class="mb-2">
+            <label class="form-label mb-1">Email</label>
+            <input name="email" type="email" class="form-control form-control-sm" required />
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label mb-1">Password</label>
+            <input name="password" type="password" class="form-control form-control-sm" required />
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100">Login</button>
+        <a class="btn btn-link w-100 mt-2 text-center" href="/account/register">Register</a>
+    </form>
+</div>
+
 
 @code {
     private string? _err;
+    private string? _email;
 
     protected override void OnParametersSet()
     {
-        // Read ?e=... from the URL
         var uri = new Uri(Nav.Uri);
         var q = QueryHelpers.ParseQuery(uri.Query);
-        _err = q.TryGetValue("e", out var v) ? v.ToString() : null;
+        _err   = q.TryGetValue("e", out var v) ? v.ToString() : null;
+        _email = q.TryGetValue("email", out var em) ? em.ToString() : null;
     }
 }
+
+

@@ -1,59 +1,53 @@
 ﻿@page "/account/register"
 @rendermode InteractiveServer
-
-<h3>Register</h3>
+@inject NavigationManager Nav
 
 @if (!string.IsNullOrEmpty(error))
 {
-    <div class="alert alert-danger">@error</div>
+    <div class="alert alert-danger mx-auto auth-alert">@error</div>
 }
 @if (ok)
 {
-    <div class="alert alert-success">Check your inbox to confirm your email.</div>
+    <div class="alert alert-success mx-auto auth-alert">Check your inbox to confirm your email.</div>
 }
 
-<form method="post" action="/app-register">
-    <div class="mb-3">
-        <label class="form-label">Name</label>
-        <input class="form-control" name="name" />
-    </div>
+<div class="auth-shell">
+    <form method="post" action="/app-register" class="card shadow-sm p-4 auth-card">
+        <h4 class="text-center mb-3">Register</h4>
 
-    <div class="mb-3">
-        <label class="form-label">Email</label>
-        <input class="form-control" name="email" type="email" required />
-    </div>
+        <div class="mb-2">
+            <label class="form-label mb-1">Name</label>
+            <input class="form-control form-control-sm" name="name" />
+        </div>
 
-    <div class="mb-3">
-        <label class="form-label">Password</label>
-        <input class="form-control" name="password" type="password" required />
-    </div>
+        <div class="mb-2">
+            <label class="form-label mb-1">Email</label>
+            <input class="form-control form-control-sm" name="email" type="email" required />
+        </div>
 
-    <div class="mb-3">
-        <label class="form-label">Confirm password</label>
-        <input class="form-control" name="password2" type="password" required />
-    </div>
+        <div class="mb-2">
+            <label class="form-label mb-1">Password</label>
+            <input class="form-control form-control-sm" name="password" type="password" required />
+        </div>
 
-    <button class="btn btn-primary" type="submit">Create account</button>
-    <a class="btn btn-link" href="/account/login">Login</a>
-</form>
+        <div class="mb-3">
+            <label class="form-label mb-1">Confirm password</label>
+            <input class="form-control form-control-sm" name="password2" type="password" required />
+        </div>
+
+        <button class="btn btn-primary w-100" type="submit">Create account</button>
+        <a class="btn btn-link w-100 mt-2 text-center" href="/account/login">Login</a>
+    </form>
+</div>
 
 @code {
-    [Parameter] public string? e { get; set; }
-    [Parameter] public string? okparam { get; set; }
-
     private string? error;
     private bool ok;
 
     protected override void OnParametersSet()
     {
-        var uri = new Uri(NavigationManager.Uri);
-        var q = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
-
-        if (q.TryGetValue("e", out var ev))
-            error = ev.ToString().Replace('+', ' ');
-        if (q.TryGetValue("ok", out var okv))
-            ok = okv == "1";
+        var q = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (q.TryGetValue("e", out var ev)) error = ev.ToString().Replace('+', ' ');
+        if (q.TryGetValue("ok", out var okv)) ok = okv == "1";
     }
-
-    [Inject] NavigationManager NavigationManager { get; set; } = default!;
 }

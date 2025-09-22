@@ -137,4 +137,35 @@ h1:focus {
         margin: 0;
     }
 /* se il Markdown genera <p> */
+.auth-shell {
+    min-height: calc(100vh - 140px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 520px;
+    border-radius: .8rem;
+}
+
+    .auth-card .form-label {
+        margin-bottom: .25rem;
+        font-weight: 500;
+    }
+
+    .auth-card .form-control-sm {
+        padding-top: .45rem;
+        padding-bottom: .45rem;
+    }
+
+.auth-alert {
+    max-width: 520px;
+}
+
+
+
+
 
