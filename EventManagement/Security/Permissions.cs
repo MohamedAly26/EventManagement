@@ -13,7 +13,6 @@ public static class Permissions
         public const string ManageUsers = "users.manage";
     }
 
-    // Se ti serve un elenco
     public static readonly string[] All =
     {
         Names.ManageEvents, Names.PermissionsConfigure, Names.ManageRoles,
